@@ -22,6 +22,9 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+# from PIL import Image
+# import numpy as np
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -83,11 +86,28 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg)
+        mask = None
+        if viewpoint_cam.mask is not None:
+            mask = viewpoint_cam.mask.int().cuda()
+
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, mask=mask)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+        if mask is not None:
+            gt_image[:, mask == 0] = 0
+            image[:, mask == 0] = 0
+    
+        # if masks_dir:
+        #     for postf in (".jpg.png", ".png.png"):
+        #         mask_path = os.path.join(masks_dir, f"{viewpoint_cam.image_name}{postf}")
+        #         if os.path.exists(mask_path):
+        #             mask =  np.array(Image.open(mask_path))
+        #             image[:, mask==0]=0
+        #             gt_image[:, mask==0]=0
+        #             break
+
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         loss.backward()
@@ -172,6 +192,10 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 for idx, viewpoint in enumerate(config['cameras']):
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    if viewpoint.mask is not None:
+                        mask = viewpoint.mask.cuda()
+                        gt_image[:, mask == 0] = 0
+                        image[:, mask == 0] = 0
                     if tb_writer and (idx < 5):
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
@@ -205,6 +229,8 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    # parser.add_argument("--masked", type=str, default = None)
+
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
