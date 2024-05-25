@@ -90,7 +90,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if viewpoint_cam.mask is not None:
             mask = viewpoint_cam.mask.cuda()
 
-        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, mask)
+        render_pkg = render(viewpoint_cam, gaussians, pipe, bg, mask=mask)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
