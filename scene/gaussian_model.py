@@ -19,16 +19,20 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation
+from utils.general_utils import strip_symmetric, build_scaling_rotation, s_r_from_cov
+from diff_gaussian_rasterization import split_gaussians
 
 class GaussianModel:
 
     def setup_functions(self):
-        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
+        def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation, strip=True):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
             actual_covariance = L @ L.transpose(1, 2)
-            symm = strip_symmetric(actual_covariance)
-            return symm
+            if strip:
+                symm = strip_symmetric(actual_covariance)
+                return symm
+            else:
+                return actual_covariance
         
         self.scaling_activation = torch.exp
         self.scaling_inverse_activation = torch.log
@@ -114,8 +118,8 @@ class GaussianModel:
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
-    def get_covariance(self, scaling_modifier = 1):
-        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+    def get_covariance(self, scaling_modifier = 1, strip=True):
+        return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation, strip=strip)
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
@@ -356,7 +360,7 @@ class GaussianModel:
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
 
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
+        means = torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
@@ -405,3 +409,51 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+    def check_inhomogenity(self, gamma_thresh):
+        top_2 = torch.topk(self.get_scaling, 2, dim=1).values
+        gammas = top_2[:,0] / top_2[:,1]
+        return gammas > gamma_thresh
+
+    @staticmethod
+    def split_gaussian_by_half(opacity_0, means_0, cov_0, n):
+        C = 0.5
+        D = 1 / np.sqrt(2 * torch.pi)
+
+        L_0 = torch.bmm(cov_0, n.permute(0, 2, 1))
+        tao = torch.sqrt(torch.bmm(n, L_0))
+        L_0_T = L_0.permute(0, 2, 1)
+
+        offset = ((L_0 * D) / (tao * C)).squeeze()
+        means_l = means_0 - offset
+        means_r = means_0 + offset
+
+        cov = cov_0 - (torch.bmm(L_0, L_0_T) / tao**2) * (D**2 / C**2)
+        opacity = opacity_0 * C
+
+        return means_l, means_r, opacity, cov
+
+
+    def split(self, mask):
+        m_0, r_0, s_0, o_0 = self.get_xyz[mask], self.get_rotation[mask], self.get_scaling[mask], self.get_opacity[mask]
+        R_0 = build_rotation(r_0)
+        cov_0 = self.get_covariance(strip=False)[mask].cuda()
+
+        max_index = torch.argmax(s_0, dim=1)
+        n = R_0[torch.arange(max_index.shape[0]).unsqueeze(1), :, max_index.unsqueeze(1)]
+
+        means_l, means_r, opacity_result, cov_result = split_gaussians(m_0, o_0, cov_0, n)
+        s, r = s_r_from_cov(cov_result)
+        s_inv = self.scaling_inverse_activation(s)
+        opacity_inv = self.inverse_opacity_activation(opacity_result)
+
+        new_xyz = torch.cat((means_l, means_r))
+        new_features_dc = torch.cat((self._features_dc[mask], self._features_dc[mask]))
+        new_features_rest = torch.cat((self._features_rest[mask], self._features_rest[mask]))
+        new_opacity = torch.cat((opacity_inv, opacity_inv))
+        new_scaling = torch.cat((s_inv, s_inv))
+        new_rotation = torch.cat((r, r))
+
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
+        prune_filter = torch.cat((mask, torch.zeros(2*mask.sum(), device="cuda", dtype=bool)))    
+        self.prune_points(prune_filter)

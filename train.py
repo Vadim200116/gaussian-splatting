@@ -122,6 +122,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
+            # Splitting
+            if opt.split_from_iter <= iteration <= opt.split_until_iter and ((iteration - opt.split_from_iter) % 5000 == 0):
+                inhomogenity_mask = gaussians.check_inhomogenity(opt.inhomogenity_threshold)
+                gaussians.split(inhomogenity_mask)
+
             # Optimizer step
             if iteration < opt.iterations:
                 gaussians.optimizer.step()

@@ -131,3 +131,41 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+
+def rotmat2qvec(batch_R):
+    batch_size = batch_R.shape[0]
+
+    Rxx = batch_R[:, 0, 0]
+    Ryx = batch_R[:, 1, 0]
+    Rzx = batch_R[:, 2, 0]
+    Rxy = batch_R[:, 0, 1]
+    Ryy = batch_R[:, 1, 1]
+    Rzy = batch_R[:, 2, 1]
+    Rxz = batch_R[:, 0, 2]
+    Ryz = batch_R[:, 1, 2]
+    Rzz = batch_R[:, 2, 2]
+
+    zeros = torch.zeros_like(Rxx)
+    K = torch.stack([
+        Rxx - Ryy - Rzz, zeros, zeros, zeros,
+        Ryx + Rxy, Ryy - Rxx - Rzz, zeros, zeros,
+        Rzx + Rxz, Rzy + Ryz, Rzz - Rxx - Ryy, zeros,
+        Ryz - Rzy, Rzx - Rxz, Rxy - Ryx, Rxx + Ryy + Rzz
+    ], dim=-1).reshape(batch_size, 4, 4) / 3.0
+
+    eigvals, eigvecs = torch.linalg.eigh(K)
+    max_eigval_indices = torch.argmax(eigvals, dim=1)
+
+    qvec = eigvecs[torch.arange(batch_size), :, max_eigval_indices]
+    qvec = qvec[:, [3, 0, 1, 2]]
+    qvec = torch.where(qvec[:, 0:1] < 0, -qvec, qvec)
+
+    return qvec
+
+def s_r_from_cov(cov):
+    eigvals, eigvecs = torch.linalg.eigh(cov)
+    eigvals = torch.relu(eigvals)
+    scales_new = torch.sqrt(eigvals)
+    rotations_new = rotmat2qvec(eigvecs)
+    return scales_new, rotations_new
