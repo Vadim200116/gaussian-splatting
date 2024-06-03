@@ -433,6 +433,30 @@ class GaussianModel:
 
         return means_l, means_r, opacity, cov
 
+    @staticmethod
+    def _split_gaussian(opacity_0, means_0, cov_0, n, d):
+        eps = 1e-20
+        tao = torch.sqrt(torch.bmm(n, torch.bmm(cov_0, n.permute(0, 2, 1))))
+        d_0 = torch.zeros_like(tao)
+        D = 1 / np.sqrt(2 * torch.pi) * (torch.exp(-d_0**2 / (2 * tao**2)) + eps)
+        L_0 = torch.bmm(cov_0, n.permute(0, 2, 1))
+        C_b = torch.erf(d_0 / (np.sqrt(2) * tao))
+
+        C_l = 0.5 * (1 - C_b + eps)
+        C_r = 0.5 * (1 + C_b + eps)
+
+        means_l = means_0 - ((L_0 * D) / (tao * C_l)).squeeze()
+        means_r = means_0 + ((L_0 * D) / (tao * C_r)).squeeze()
+
+        L_0_T = L_0.permute(0, 2, 1)
+
+        cov_left = cov_0 + (torch.bmm(L_0, L_0_T) / tao**2) * ((d_0 * D) / (tao * C_l) - D**2 / C_l**2)
+        cov_right = cov_0 - (torch.bmm(L_0, L_0_T) / tao**2) * ((d_0 * D) / (tao * C_r) + D**2 / C_r**2)
+        
+        opacity_l = opacity_0.squeeze() * C_l.squeeze()
+        opacity_r = opacity_0.squeeze() * C_r.squeeze()
+
+        return opacity_l.unsqueeze(1), means_l, cov_left, opacity_r.unsqueeze(1), means_r, cov_right
 
     def split(self, mask):
         m_0, r_0, s_0, o_0 = self.get_xyz[mask], self.get_rotation[mask], self.get_scaling[mask], self.get_opacity[mask]
