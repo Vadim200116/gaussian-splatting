@@ -55,6 +55,8 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.masked = False
+        self.mask_dilate = 10
+
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
