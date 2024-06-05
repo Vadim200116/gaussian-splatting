@@ -20,7 +20,6 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, s_r_from_cov
-from diff_gaussian_rasterization import split_gaussians
 
 class GaussianModel:
 
@@ -416,7 +415,7 @@ class GaussianModel:
         return gammas > gamma_thresh
 
     @staticmethod
-    def split_gaussian_by_half(opacity_0, means_0, cov_0, n):
+    def split_gaussian_by_half(means_0, opacity_0, cov_0, n):
         C = 0.5
         D = 1 / np.sqrt(2 * torch.pi)
 
@@ -466,7 +465,7 @@ class GaussianModel:
         max_index = torch.argmax(s_0, dim=1)
         n = R_0[torch.arange(max_index.shape[0]).unsqueeze(1), :, max_index.unsqueeze(1)]
 
-        means_l, means_r, opacity_result, cov_result = split_gaussians(m_0, o_0, cov_0, n)
+        means_l, means_r, opacity_result, cov_result = self.split_gaussian_by_half(m_0, o_0, cov_0, n)
         s, r = s_r_from_cov(cov_result)
         s_inv = self.scaling_inverse_activation(s)
         opacity_inv = self.inverse_opacity_activation(opacity_result)

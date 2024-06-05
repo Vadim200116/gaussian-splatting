@@ -123,7 +123,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gaussians.reset_opacity()
 
             # Splitting
-            if opt.split_from_iter <= iteration <= opt.split_until_iter and ((iteration - opt.split_from_iter) % 5000 == 0):
+            if opt.split_from_iter <= iteration <= opt.split_until_iter and ((iteration - opt.split_from_iter) % opt.split_interval == 0):
                 inhomogenity_mask = gaussians.check_inhomogenity(opt.inhomogenity_threshold)
                 gaussians.split(inhomogenity_mask)
 
