@@ -47,6 +47,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    mask_opacity_flag = True # False for prune True for reset opacity
+
+    viewpoints_with_masks = [v for v in scene.getTrainCameras() if v.mask is not None]
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -141,6 +144,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
+            elif iteration < opt.mask_reset_opacity_until_iter:
+                if iteration % opt.mask_opacity_reset_interval == 0:
+                    if mask_opacity_flag:
+                        for _ in range(opt.num_masks_to_reset):
+                            if not viewpoints_with_masks:
+                                viewpoints_with_masks = [v for v in scene.getTrainCameras() if v.mask is not None]
+                            mask_view = viewpoints_with_masks.pop(randint(0, len(viewpoints_with_masks)-1))
+                            print("Reset opacity")
+                            gaussians.reset_mask_opacity(mask_view)
+                    else:
+                        prune_mask = (gaussians.get_opacity < 0.005).squeeze()
+                        gaussians.prune_points(prune_mask)
+                        print("Prune points:", prune_mask.sum())
+                    mask_opacity_flag = not mask_opacity_flag
 
             # Optimizer step
             if iteration < opt.iterations:

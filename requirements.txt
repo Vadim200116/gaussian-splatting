@@ -8,3 +8,4 @@ plyfile
 pytorch_msssim
 open3d
 tqdm
+gsplat

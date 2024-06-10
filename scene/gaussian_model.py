@@ -20,6 +20,8 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation
+import math
+from utils.project_gaussians_utils import project_gaussians, apply_sam_mask
 
 class GaussianModel:
 
@@ -211,6 +213,47 @@ class GaussianModel:
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
+
+    def project(self, view):
+        means3D, rotations, scales = self.get_xyz, self.get_rotation, self.get_scaling
+
+        scaling_modifier = 1.0
+        width = view.image_width
+        height = view.image_height
+
+        tanfovx = math.tan(view.FoVx * 0.5)
+        tanfovy = math.tan(view.FoVy * 0.5)
+
+        fx = width / (2.0 * tanfovx)
+        fy = height / (2.0 * tanfovy)
+
+        B_SIZE = 16
+
+        return project_gaussians(
+            means3D,
+            scales,
+            rotations,
+            view.world_view_transform.cuda(),
+            view.full_proj_transform.cuda(),
+            width,
+            height,
+            B_SIZE,
+            scaling_modifier,
+            tanfovx,
+            tanfovy,
+            fx, fy,
+        )
+
+
+    def reset_mask_opacity(self, view):
+        means2D, depth, projection_mask = self.project(view)
+        mask =  apply_sam_mask(view, means2D)
+        opacities_new = self.get_opacity.clone()
+        opacities_new[mask] = torch.min(opacities_new[mask], torch.ones_like(opacities_new[mask])*0.01)
+        opacities_new = inverse_sigmoid(opacities_new)
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        self._opacity = optimizable_tensors["opacity"]
+
 
     def load_ply(self, path):
         plydata = PlyData.read(path)
