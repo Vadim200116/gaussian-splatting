@@ -22,9 +22,12 @@ from tqdm import tqdm
 from utils.image_utils import psnr, normalize_depth
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-# from PIL import Image
+from PIL import Image
 # import numpy as np
 import scipy
+import segmentation_models_pytorch as smp
+from pathlib import Path
+
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -32,10 +35,21 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, stop_train_transient):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
+    transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=3, encoder_weights='imagenet', classes=1,
+                             activation="sigmoid", encoder_depth=5, decoder_channels=[224, 128, 64, 32, 16]).to("cuda")
+    # transient_model = smp.UnetPlusPlus('timm-efficientnet-b0', in_channels=3, encoder_weights='imagenet',
+    #                                    classes=1,
+    #                                    activation="sigmoid", encoder_depth=5,
+    #                                    decoder_channels=[224, 128, 64, 32, 16]).to("cuda")
+    transient_optimizer = torch.optim.Adam(transient_model.parameters(), lr=1e-5)
+    transient_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(transient_optimizer, opt.iterations, 5e-6)
+    overlays_path = Path(dataset.model_path) / "overlays"
+    overlays_path.mkdir(exist_ok=True)
+
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
     if checkpoint:
@@ -98,32 +112,59 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+        # resize image to 224x224
+        gt_image_resized = torch.nn.functional.interpolate(gt_image.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=True)
 
-        mask  = viewpoint_cam.mask
-        if mask is not None:
-            mask = mask.cuda()
+        # predict weights for each pixel with transient model
+        weights = transient_model(gt_image_resized)
+        weights = torch.nn.functional.interpolate(weights, size=(gt_image.shape[1], gt_image.shape[2]), mode='bilinear', align_corners=True).squeeze(0)
 
-        if dataset.use_decoupled_appearance:
-            Ll1 = L1_loss_appearance(image, gt_image, gaussians, viewpoint_cam.idx, mask=mask)
+        # overlay weights on gt_image as green color intensity for visualization
+        with torch.no_grad():
+            if iteration % 100 == 0:
+                overlay = gt_image.clone()  # [3, h, w]
+                overlay[1] = overlay[1] + weights[0]
+                overlay[1] = torch.clamp(overlay[1], 0, 1)
+                # save overlay image
+                overlay = Image.fromarray((overlay.detach().permute(1, 2, 0).cpu().numpy() * 255).astype('uint8'))
+                overlay.save(str(overlays_path / f"{iteration}.png"))
+
+        # noinspection PyInterpreter
+        if stop_train_transient:
+            train_transient = (iteration < opt.iterations - 20000)
         else:
-            Ll1 = l1_loss(image, gt_image, mask)
+            train_transient = True
 
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=mask))
-
-
-        if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
-            depth = normalize_depth(render_pkg["depth"])
-
-            tv_mask = None
-            if iteration > opt.canny_start: 
-                canny_mask = image2canny(image.permute(1,2,0), 50, 150, isEdge1=False)
-                canny_mask = scipy.ndimage.binary_erosion(canny_mask, iterations=2, border_value=1)
-                tv_mask = torch.tensor(canny_mask).cuda()
-            tv = total_variation_loss(depth, tv_mask)
-            loss += opt.lambda_tv * tv
+        if train_transient:
+            if viewpoint_cam.mask is not None:
+                mask = viewpoint_cam.mask.cuda()
+                # mask_resized = torch.nn.functional.interpolate(mask.view(1,1,*mask.shape).float(), size=(224, 224), mode='bilinear', align_corners=True).view(1, *mask.shape)
+                weights_loss = torch.abs(weights-(1-mask.view(*weights.shape))).mean()
+                # weights_loss = torch.nn.functional.binary_cross_entropy(weights, 1-mask.view(*weights.shape))
+            else:
+                weights_loss = weights.mean()
+            Ll1 = l1_loss(image, gt_image)
+            # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            loss = 1.0 * ((1-weights) * Ll1).mean() + 0.05 * weights_loss
+        else:
+            threshold = 0.9
+            mask = (weights < threshold).squeeze()  # [h, w]
+            if viewpoint_cam.mask is not None:
+                given_mask = viewpoint_cam.mask.cuda()
+                mask[given_mask == 0] = 0
+            gt_image[:, mask == 0] = 0
+            image[:, mask == 0] = 0
+            Ll1 = l1_loss(image, gt_image).mean()
+            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            transient_model.eval()
 
         loss.backward()
         iter_end.record()
+
+        if train_transient:
+            transient_optimizer.step()
+            transient_optimizer.zero_grad()
+            transient_scheduler.step()
 
         with torch.no_grad():
             # Progress bar
@@ -161,6 +202,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+            torch.save(transient_model.state_dict(), Path(dataset.model_path) / "transient.pth")
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -232,14 +275,15 @@ if __name__ == "__main__":
     op = OptimizationParams(parser)
     pp = PipelineParams(parser)
     parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=6009)
+    parser.add_argument('--port', type=int, default=6003)
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 40_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 40_000])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument('--stop_train_transient', action='store_true', default=False)
     # parser.add_argument("--masked", type=str, default = None)
 
     args = parser.parse_args(sys.argv[1:])
@@ -253,7 +297,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.stop_train_transient)
 
     # All done
     print("\nTraining complete.")
