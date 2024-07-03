@@ -15,13 +15,18 @@ from torch.autograd import Variable
 from math import exp
 
 def apply_mask(image, mask):
-
     if image.ndimension() == 2:
         return image * mask
     if image.ndimension() == 3:
         return image * mask.unsqueeze(0)
     if image.ndimension() == 4:
         return image * mask.unsqueeze(0).unsqueeze(0)
+
+
+def total_variation_loss(img):
+    w_variance = torch.sum(torch.pow(img[:, :-1] - img[:, 1:], 2))
+    h_variance = torch.sum(torch.pow(img[:-1, :] - img[1:, :], 2))
+    return h_variance + w_variance
 
 
 def l1_loss(network_output, gt, mask=None):

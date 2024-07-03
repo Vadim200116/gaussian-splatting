@@ -12,14 +12,14 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, L1_loss_appearance
+from utils.loss_utils import l1_loss, ssim, L1_loss_appearance, total_variation_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr
+from utils.image_utils import psnr, normalize_depth
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 # from PIL import Image
@@ -105,8 +105,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             Ll1 = l1_loss(image, gt_image, mask)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, mask=mask))
-        loss.backward()
 
+
+        if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
+            depth = normalize_depth(render_pkg["depth"])
+            tv = total_variation_loss(depth)
+            loss += opt.lambda_tv * tv
+
+        loss.backward()
         iter_end.record()
 
         with torch.no_grad():

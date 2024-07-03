@@ -57,6 +57,7 @@ class ModelParams(ParamGroup):
         self.masked = False
         self.mask_dilate = 10
         self.use_decoupled_appearance = False
+        
 
         super().__init__(parser, "Loading Parameters", sentinel)
 
@@ -93,6 +94,10 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
         self.random_background = False
+        self.lambda_tv = 0.01
+        self.tv_from_iter  =  0
+        self.tv_until_iter  =  30_000
+
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
