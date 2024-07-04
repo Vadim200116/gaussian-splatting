@@ -183,6 +183,13 @@ class GaussianModel:
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
                 return lr
+    
+    def freeze_xyz(self):
+        for param_group in self.optimizer.param_groups:
+            if param_group["name"] == "xyz":
+                lr = 0.0
+                param_group['lr'] = lr
+                return True
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']

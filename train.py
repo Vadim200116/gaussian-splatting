@@ -72,7 +72,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         iter_start.record()
 
-        gaussians.update_learning_rate(iteration)
+        if opt.lambda_tv and iteration >= opt.tv_until_iter:
+            gaussians.freeze_xyz()
+        else:
+            gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
