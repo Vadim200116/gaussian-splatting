@@ -186,7 +186,7 @@ class GaussianModel:
     
     def freeze_xyz(self):
         for param_group in self.optimizer.param_groups:
-            if param_group["name"] == "xyz":
+            if param_group["name"] in ("xyz", "scaling"):
                 lr = 0.0
                 param_group['lr'] = lr
                 return True
