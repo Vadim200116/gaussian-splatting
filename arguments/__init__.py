@@ -97,6 +97,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_tv = 0.01
         self.tv_from_iter  =  0
         self.tv_until_iter  =  30_000
+        self.canny_start = 1000
 
         super().__init__(parser, "Optimization Parameters")
 

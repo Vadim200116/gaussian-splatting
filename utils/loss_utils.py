@@ -13,31 +13,41 @@ import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
+import cv2
+import numpy as np
 
-def apply_mask(image, mask):
-    if image.ndimension() == 2:
-        return image * mask
-    if image.ndimension() == 3:
-        return image * mask.unsqueeze(0)
-    if image.ndimension() == 4:
-        return image * mask.unsqueeze(0).unsqueeze(0)
+def total_variation_loss(img, mask=None):
 
+    d_w = torch.pow(img[:, :-1] - img[:, 1:], 2)
+    d_h = torch.pow(img[:-1, :] - img[1:, :], 2)
+    if mask is not None:
+        d_w *= mask[:, :-1]
+        d_h *= mask[:-1, :]
 
-def total_variation_loss(img):
-    w_variance = torch.sum(torch.pow(img[:, :-1] - img[:, 1:], 2))
-    h_variance = torch.sum(torch.pow(img[:-1, :] - img[1:, :], 2))
+    w_variance = torch.mean(d_w)
+    h_variance = torch.mean(d_h)
+
     return h_variance + w_variance
 
-
 def l1_loss(network_output, gt, mask=None):
+    diff  = torch.abs(network_output - gt).squeeze()
     if mask is not None:
-        network_output = apply_mask(network_output, mask)
-        gt = apply_mask(gt, mask)
+        if mask.shape == diff.shape:
+            diff *= mask 
+        else:
+            diff[:, mask == 0] = 0
+    
+    return diff.mean()
 
-    return torch.abs((network_output - gt)).mean()
+def l2_loss(network_output, gt, mask=None):
+    diff  = ((network_output - gt) ** 2).squeeze()
+    if mask is not None:
+        if mask.shape == diff.shape:
+            diff *= mask 
+        else:
+            diff[:, mask == 0] = 0
 
-def l2_loss(network_output, gt):
-    return ((network_output - gt) ** 2).mean()
+    return diff.mean()
 
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
@@ -108,3 +118,10 @@ def L1_loss_appearance(image, gt_image, gaussians, view_idx, return_transformed_
     else:
         transformed_image = torch.nn.functional.interpolate(transformed_image, size=(origH, origW), mode="bilinear", align_corners=True)[0]
         return transformed_image
+
+def image2canny(image, thres1, thres2, isEdge1=True):
+    """ image: (H, W, 3)"""
+    canny_mask = torch.from_numpy(cv2.Canny((image.detach().cpu().numpy()*255.).astype(np.uint8), thres1, thres2)/255.)
+    if not isEdge1:
+        canny_mask = 1. - canny_mask
+    return canny_mask.float()
