@@ -55,9 +55,11 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.masked = False
+        self.dynamic_score = ""
         self.mask_dilate = 10
         self.use_decoupled_appearance = False
-        
+        self.dynamic_score = ""
+
 
         super().__init__(parser, "Loading Parameters", sentinel)
 

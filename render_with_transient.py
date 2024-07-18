@@ -20,19 +20,65 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, get_combined_args
 from gaussian_renderer import GaussianModel
+import segmentation_models_pytorch as smp
+from pathlib import Path
 
 def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
+    pred_path = os.path.join(model_path, name, "ours_{}".format(iteration), "pred")
+    overlay_path = os.path.join(model_path, name, "ours_{}".format(iteration), "overlay")
+    overlay_diff_path = os.path.join(model_path, name, "ours_{}".format(iteration), "overlay_diff")
+
+    transient_path = os.path.join(model_path, "transient.pth")
+    transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=3, encoder_weights='imagenet',
+                                       classes=1,
+                                       activation="sigmoid", encoder_depth=5,
+                                       decoder_channels=[224, 128, 64, 32, 16]).to("cuda")
+    transient_model.load_state_dict(torch.load(transient_path))
+    transient_model.eval()
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(pred_path, exist_ok=True)
+    makedirs(overlay_path, exist_ok=True)
+    makedirs(overlay_diff_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         rendering = render(view, gaussians, pipeline, background)["render"]
         gt = view.original_image[0:3, :, :]
-        torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+        torchvision.utils.save_image(rendering, os.path.join(render_path,  f"{view.image_name}.png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, f"{view.image_name}.png"))
+
+        gt_image_resized = torch.nn.functional.interpolate(gt.unsqueeze(0), size=(224, 224), mode='bilinear',
+                                                           align_corners=True)
+        # predict weights for each pixel with transient model
+        with torch.no_grad():
+            weights = transient_model(gt_image_resized)
+            weights = torch.nn.functional.interpolate(weights, size=(gt.shape[1], gt.shape[2]), mode='bilinear',
+                                                      align_corners=True).squeeze(0)
+
+        # save as grayscale image
+        torchvision.utils.save_image(weights[0], os.path.join(pred_path, f"{view.image_name}.png"))
+
+        overlay = gt.clone()  # [3, h, w]
+        overlay[1] = overlay[1] + weights[0]
+        overlay[1] = torch.clamp(overlay[1], 0, 1)
+        # save overlay image
+        torchvision.utils.save_image(overlay, os.path.join(overlay_path, f"{view.image_name}.png"))
+
+        overlay_diff = gt.clone()
+        weights = weights.squeeze()
+        m1 = (weights > 0.9)  # 1 is dynamic
+        if view.mask is not None:
+            m2 = view.mask.cuda().bool()  # 0 is dynamic
+        else:
+            m2 = torch.ones_like(weights).bool()
+        overlay_diff[1, torch.logical_and(m1, m2)] = 1
+        overlay_diff[0, torch.logical_and(~m1, ~m2)] = 1
+        # save overlay imag
+        torchvision.utils.save_image(overlay_diff, os.path.join(overlay_diff_path, '{0:05d}'.format(idx) + ".png"))
+
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
     with torch.no_grad():

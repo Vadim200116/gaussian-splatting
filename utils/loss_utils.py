@@ -91,7 +91,7 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
     if size_average:
         return ssim_map.mean()
     else:
-        return ssim_map.mean(1).mean(1).mean(1)
+        return ssim_map
 
 
 def L1_loss_appearance(image, gt_image, gaussians, view_idx, return_transformed_image=False, mask=None):
