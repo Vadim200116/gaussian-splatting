@@ -203,6 +203,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                torch.save(transient_model.state_dict(), scene.model_path + f"/transient_{iteration}.pth")
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -225,8 +226,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
-
-            torch.save(transient_model.state_dict(), Path(dataset.model_path) / "transient.pth")
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
