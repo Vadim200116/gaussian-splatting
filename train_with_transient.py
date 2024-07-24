@@ -17,14 +17,14 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, total_variation_loss, image2canny
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr
+from utils.image_utils import psnr, normalize_depth
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from PIL import Image
@@ -32,7 +32,7 @@ from PIL import Image
 import segmentation_models_pytorch as smp
 from pathlib import Path
 import torch.nn.functional as F
-
+import scipy
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -166,6 +166,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             Ll1 = l1_loss(image, gt_image).mean()
             loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             transient_model.eval()
+
+
+
+        if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
+            depth = normalize_depth(render_pkg["depth"])
+
+            tv_mask = None
+            if iteration > opt.canny_start: 
+                canny_mask = image2canny(image.permute(1,2,0), 50, 150, isEdge1=False)
+                canny_mask = scipy.ndimage.binary_erosion(canny_mask, iterations=2, border_value=1)
+                tv_mask = torch.tensor(canny_mask).cuda()
+            tv = total_variation_loss(depth, tv_mask)
+            loss += opt.lambda_tv * tv
 
         loss.backward()
 
