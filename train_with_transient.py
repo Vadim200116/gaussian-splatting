@@ -1,3 +1,8 @@
+# - make new branch in my repo and cherry-pick commits
+# - build new docker with depth rasterizer
+# - launch on full resolution
+# - launch with lowest resolution to then upsample mask
+
 #
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
@@ -26,6 +31,7 @@ from PIL import Image
 # import numpy as np
 import segmentation_models_pytorch as smp
 from pathlib import Path
+import torch.nn.functional as F
 
 
 try:
@@ -105,12 +111,22 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        # resize image to 224x224
-        gt_image_resized = torch.nn.functional.interpolate(gt_image.unsqueeze(0), size=(224, 224), mode='bilinear', align_corners=True)
 
-        # predict weights for each pixel with transient model
-        weights = transient_model(gt_image_resized)
-        weights = torch.nn.functional.interpolate(weights, size=(gt_image.shape[1], gt_image.shape[2]), mode='bilinear', align_corners=True).squeeze(0)
+        width, height = gt_image.shape[1:]
+        target_width = (width + 31) // 32 * 32
+        target_height = (height + 31) // 32 * 32
+
+        pad_width_left = (target_width - width) // 2
+        pad_width_right = target_width - width - pad_width_left
+        pad_height_top = (target_height - height) // 2
+        pad_height_bottom = target_height - height - pad_height_top
+
+        padded_image = F.pad(gt_image, 
+                            (pad_height_top, pad_height_bottom, pad_width_left, pad_width_right), 
+                            mode='constant', 
+                            value=0)
+        #TODO: dilate
+        weights = transient_model(padded_image.unsqueeze(0)).squeeze()[pad_width_left: pad_width_left + width, pad_height_top: pad_height_top + height]
 
         # overlay weights on gt_image as green color intensity for visualization
         with torch.no_grad():

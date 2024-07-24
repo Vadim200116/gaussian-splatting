@@ -29,15 +29,8 @@ def total_variation_loss(img, mask=None):
 
     return h_variance + w_variance
 
-def l1_loss(network_output, gt, mask=None):
-    diff  = torch.abs(network_output - gt).squeeze()
-    if mask is not None:
-        if mask.shape == diff.shape:
-            diff *= mask 
-        else:
-            diff[:, mask == 0] = 0
-    
-    return diff.mean()
+def l1_loss(network_output, gt):
+    return torch.abs((network_output - gt))
 
 def l2_loss(network_output, gt, mask=None):
     diff  = ((network_output - gt) ** 2).squeeze()
