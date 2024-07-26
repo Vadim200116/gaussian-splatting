@@ -14,6 +14,9 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
+import os
+import imageio
+from tqdm import tqdm
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -131,3 +134,21 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def prep_img(img):
+    to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
+    return to8b(img.detach()).transpose(1,2,0)
+
+
+def make_gif(images, path_to_save, framerate=20, rate=10):
+    
+    os.system("rm -r /tmp_images")
+    os.system("mkdir /tmp_images/")
+
+    img_path = "/tmp_images/"
+
+    for idx, img in tqdm(enumerate(images)):
+        imageio.imwrite(os.path.join(img_path, '{0:05d}'.format(idx) + ".png"), img)
+
+    os.system(f"ffmpeg -framerate {framerate} -i {img_path}/%05d.png -r {rate} -s 640x480  {path_to_save} -y")
+    os.system("rm -r /tmp_images")

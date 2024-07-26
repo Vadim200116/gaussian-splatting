@@ -33,6 +33,8 @@ import segmentation_models_pytorch as smp
 from pathlib import Path
 import torch.nn.functional as F
 import scipy
+from  utils.general_utils import make_gif, prep_img
+
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -40,7 +42,7 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, stop_train_transient):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, stop_train_transient, eval_path):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -204,6 +206,56 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
                 torch.save(transient_model.state_dict(), scene.model_path + f"/transient_{iteration}.pth")
+                if iteration == saving_iterations[-1]:
+                    transient_model.eval()
+                    rendered_images = []
+                    cams = sorted(scene.getTrainCameras(), key=lambda x: int(x.image_name))
+    
+                    for viewpoint_cam in tqdm(cams):
+                        rendered_images.append(prep_img(render(viewpoint_cam, gaussians, pipe, bg)["render"]))
+                        gt_image = viewpoint_cam.original_image.cuda()
+
+                    make_gif(rendered_images, os.path.join(scene.model_path, f"rendered.gif"), framerate=8)
+                    if eval_path:
+                        dataset.source_path = eval_path
+
+                        stub_gaussians = GaussianModel(dataset.sh_degree)
+                        eval_scene = Scene(dataset, stub_gaussians)    
+                        ref_cams = []
+                        for cam in eval_scene.getTrainCameras():
+                            try:
+                                int(cam.image_name)
+                            except:
+                                cam.image_name = cam.image_name[4:]
+                                ref_cams.append(cam)
+
+                        ref_cams = sorted(ref_cams, key= lambda x: int(x.image_name))
+                        rendered_images = []
+                        for cam in tqdm(ref_cams):
+                            rendered_images.append(prep_img(render(cam, gaussians, pipe, bg)["render"]))
+
+                        make_gif(rendered_images, os.path.join(args.model_path, f"similar_traj.gif"), framerate=8, rate=10)
+
+
+                        ssims = []
+                        psnrs = []
+                        for idx, view in enumerate(tqdm(ref_cams)):
+                            with torch.no_grad():
+                                rendered_img  = torch.clamp(render(view, gaussians, pp, bg)["render"], 0.0, 1.0)
+                                gt_image = torch.clamp(view.original_image.to("cuda"), 0.0, 1.0)
+                                ssims.append(ssim(rendered_img, gt_image).mean())
+                                psnrs.append(psnr(rendered_img, gt_image).mean())
+                                if (idx + 1) % 50 == 0:
+                                    torch.cuda.empty_cache()
+
+                        print("  SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+                        print("  PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
+
+                        with open(os.path.join(args.model_path, "report.txt"), "w") as f:
+                            f.write("SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+                            f.write("\n")
+                            f.write("PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
+
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -306,6 +358,8 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument('--stop_train_transient', action='store_true', default=False)
+    parser.add_argument('--eval_path', type=str, default=None)
+
     # parser.add_argument("--masked", type=str, default = None)
 
     args = parser.parse_args(sys.argv[1:])
@@ -319,7 +373,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.stop_train_transient)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.stop_train_transient, args.eval_path)
 
     # All done
     print("\nTraining complete.")
