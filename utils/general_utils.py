@@ -137,25 +137,22 @@ def safe_state(silent):
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
 
-def pred_weights(gt_image, transient_model):
-    width, height = gt_image.shape[1:]
+
+def pred_weights(transient_input, transient_model):
+    width, height = transient_input.shape[1:]
     target_width = (width + 31) // 32 * 32
     target_height = (height + 31) // 32 * 32
-
 
     pad_width_left = (target_width - width) // 2
     pad_width_right = target_width - width - pad_width_left
     pad_height_top = (target_height - height) // 2
     pad_height_bottom = target_height - height - pad_height_top
 
-
-    padded_image = F.pad(gt_image, 
+    padded_input = F.pad(transient_input, 
                         (pad_height_top, pad_height_bottom, pad_width_left, pad_width_right), 
-                        mode='constant', 
-                        value=0)  # Here, using 0 for padding, could be others like 'reflect', 'replicate'
+                        mode='replicate')
 
-    weights = transient_model(padded_image.unsqueeze(0)).squeeze()
-
+    weights = transient_model(padded_input.unsqueeze(0)).squeeze()
     rec_weights = weights[pad_width_left: pad_width_left + width, pad_height_top: pad_height_top + height]
 
     return rec_weights
@@ -164,11 +161,12 @@ def prep_img(img):
     to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
     return to8b(img.detach()).transpose(1,2,0)
 
-def mask_image(gt_image, transient_model, threshold = 0.5):
-    weights = pred_weights(gt_image, transient_model)
+def mask_image(transient_input, transient_model, threshold = 0.5):
+    weights = pred_weights(transient_input, transient_model)
+
     mask_np = (weights>threshold).detach().cpu().numpy()
     mask_ = np.expand_dims(np.array(mask_np),2).repeat(3, axis=2)
-    img_np = prep_img(gt_image)
+    img_np = prep_img(transient_input[:3])
 
     h,w = img_np.shape[:2]
     green = np.zeros([h, w, 3]) 

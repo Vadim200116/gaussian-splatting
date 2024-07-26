@@ -13,7 +13,7 @@ from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
-
+import torch
 WARNED = False
 
 
@@ -47,6 +47,14 @@ def loadCam(args, id, cam_info, resolution_scale):
     if cam_info.mask:
         mask = PILtoTorch(cam_info.mask, resolution)[0]
 
+    flow = None
+    if cam_info.flow is not None:
+        flow = torch.from_numpy(cam_info.flow)
+        # height, width = flow.shape[1:]
+        # flow[0] /= width
+        # flow[1] /= height
+
+
     dynamic_score = None
     if cam_info.dynamic_score:
         dynamic_score = PILtoTorch(cam_info.dynamic_score, resolution)
@@ -61,7 +69,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, mask=mask, dynamic_score=dynamic_score)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, mask=mask, dynamic_score=dynamic_score, flow=flow)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

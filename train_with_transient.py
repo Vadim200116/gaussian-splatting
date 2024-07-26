@@ -46,7 +46,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=3, encoder_weights='imagenet', classes=1,
+    transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=8 if dataset.flow else 3, encoder_weights='imagenet', classes=1,
                              activation="sigmoid", encoder_depth=5, decoder_channels=[224, 128, 64, 32, 16]).to("cuda")
     # transient_model = smp.UnetPlusPlus('timm-efficientnet-b0', in_channels=3, encoder_weights='imagenet',
     #                                    classes=1,
@@ -69,6 +69,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
+    viewpoint_mapping = {int(view.image_name): view for view in scene.getTrainCameras()}
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -113,7 +114,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        weights = pred_weights(gt_image, transient_model)
+        if dataset.flow:
+            if viewpoint_cam.flow is not None:
+                flow = viewpoint_cam.flow.cuda()
+                next_image_idx = int(viewpoint_cam.image_name) + 1
+                next_image = viewpoint_mapping[next_image_idx].original_image.cuda()
+                transient_input = torch.cat((gt_image, next_image, flow), dim=0)
+            else:
+                continue
+        else:
+            transient_input = gt_image
+        weights = pred_weights(transient_input, transient_model)
 
         # overlay weights on gt_image as green color intensity for visualization
         with torch.no_grad():
@@ -200,7 +211,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     for viewpoint_cam in tqdm(cams):
                         rendered_images.append(prep_img(render(viewpoint_cam, gaussians, pipe, bg)["render"]))
                         gt_image = viewpoint_cam.original_image.cuda()
-                        masked_images.append(mask_image(gt_image, transient_model))
+                        if dataset.flow:
+                            if viewpoint_cam.flow is not None:
+                                flow = viewpoint_cam.flow.cuda()
+                                next_image_idx = int(viewpoint_cam.image_name) + 1
+                                next_image = viewpoint_mapping[next_image_idx].original_image.cuda()
+                                transient_input = torch.cat((gt_image, next_image, flow), dim=0).cuda()
+                            else:
+                                continue
+                        else:
+                            transient_input = gt_image
+                        masked_images.append(mask_image(transient_input, transient_model))
 
                     make_gif(masked_images, os.path.join(scene.model_path, f"masked.gif"), framerate=8)
                     make_gif(rendered_images, os.path.join(scene.model_path, f"rendered.gif"), framerate=8)
