@@ -14,6 +14,8 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
+import torch.nn.functional as F
+from PIL import Image
 import os
 import imageio
 from tqdm import tqdm
@@ -135,9 +137,47 @@ def safe_state(silent):
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
 
+def pred_weights(gt_image, transient_model):
+    width, height = gt_image.shape[1:]
+    target_width = (width + 31) // 32 * 32
+    target_height = (height + 31) // 32 * 32
+
+
+    pad_width_left = (target_width - width) // 2
+    pad_width_right = target_width - width - pad_width_left
+    pad_height_top = (target_height - height) // 2
+    pad_height_bottom = target_height - height - pad_height_top
+
+
+    padded_image = F.pad(gt_image, 
+                        (pad_height_top, pad_height_bottom, pad_width_left, pad_width_right), 
+                        mode='constant', 
+                        value=0)  # Here, using 0 for padding, could be others like 'reflect', 'replicate'
+
+    weights = transient_model(padded_image.unsqueeze(0)).squeeze()
+
+    rec_weights = weights[pad_width_left: pad_width_left + width, pad_height_top: pad_height_top + height]
+
+    return rec_weights
+
 def prep_img(img):
     to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
     return to8b(img.detach()).transpose(1,2,0)
+
+def mask_image(gt_image, transient_model, threshold = 0.5):
+    weights = pred_weights(gt_image, transient_model)
+    mask_np = (weights>threshold).detach().cpu().numpy()
+    mask_ = np.expand_dims(np.array(mask_np),2).repeat(3, axis=2)
+    img_np = prep_img(gt_image)
+
+    h,w = img_np.shape[:2]
+    green = np.zeros([h, w, 3]) 
+    green[:,:,1] = 255
+    alpha = 0.6
+    fuse_img = (1-alpha)*img_np + alpha*green
+    fuse_img = mask_ * fuse_img + (1-mask_)*img_np
+
+    return Image.fromarray(fuse_img.astype(np.uint8))
 
 
 def make_gif(images, path_to_save, framerate=20, rate=10):
@@ -152,3 +192,5 @@ def make_gif(images, path_to_save, framerate=20, rate=10):
 
     os.system(f"ffmpeg -framerate {framerate} -i {img_path}/%05d.png -r {rate} -s 640x480  {path_to_save} -y")
     os.system("rm -r /tmp_images")
+
+

@@ -33,7 +33,7 @@ import segmentation_models_pytorch as smp
 from pathlib import Path
 import torch.nn.functional as F
 import scipy
-from  utils.general_utils import make_gif, prep_img
+from  utils.general_utils import pred_weights, mask_image, make_gif, prep_img
 
 
 try:
@@ -113,22 +113,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-
-        width, height = gt_image.shape[1:]
-        target_width = (width + 31) // 32 * 32
-        target_height = (height + 31) // 32 * 32
-
-        pad_width_left = (target_width - width) // 2
-        pad_width_right = target_width - width - pad_width_left
-        pad_height_top = (target_height - height) // 2
-        pad_height_bottom = target_height - height - pad_height_top
-
-        padded_image = F.pad(gt_image, 
-                            (pad_height_top, pad_height_bottom, pad_width_left, pad_width_right), 
-                            mode='constant', 
-                            value=0)
-        #TODO: dilate
-        weights = transient_model(padded_image.unsqueeze(0)).squeeze()[pad_width_left: pad_width_left + width, pad_height_top: pad_height_top + height]
+        weights = pred_weights(gt_image, transient_model)
 
         # overlay weights on gt_image as green color intensity for visualization
         with torch.no_grad():
@@ -209,12 +194,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration == saving_iterations[-1]:
                     transient_model.eval()
                     rendered_images = []
+                    masked_images = []
                     cams = sorted(scene.getTrainCameras(), key=lambda x: int(x.image_name))
     
                     for viewpoint_cam in tqdm(cams):
                         rendered_images.append(prep_img(render(viewpoint_cam, gaussians, pipe, bg)["render"]))
                         gt_image = viewpoint_cam.original_image.cuda()
+                        masked_images.append(mask_image(gt_image, transient_model))
 
+                    make_gif(masked_images, os.path.join(scene.model_path, f"masked.gif"), framerate=8)
                     make_gif(rendered_images, os.path.join(scene.model_path, f"rendered.gif"), framerate=8)
                     if eval_path:
                         dataset.source_path = eval_path
