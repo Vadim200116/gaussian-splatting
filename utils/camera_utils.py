@@ -54,6 +54,10 @@ def loadCam(args, id, cam_info, resolution_scale):
         # flow[0] /= width
         # flow[1] /= height
 
+    semantics = []
+    if cam_info.semantics is not None:
+        for semantic in cam_info.semantics:
+            semantics.append(PILtoTorch(semantic, resolution)[0])
 
     dynamic_score = None
     if cam_info.dynamic_score:
@@ -69,7 +73,9 @@ def loadCam(args, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device, mask=mask, dynamic_score=dynamic_score, flow=flow)
+                  image_name=cam_info.image_name, uid=id, data_device=args.data_device,
+                  mask=mask, dynamic_score=dynamic_score, flow=flow, semantics=semantics or None,
+                )
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []

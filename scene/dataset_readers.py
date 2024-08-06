@@ -39,6 +39,8 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     flow: np.array
+    semantics: np.array
+
 
 class SceneInfo(NamedTuple):
     point_cloud: BasicPointCloud
@@ -70,7 +72,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder=None, mask_dilate=None, dynamic_scores=None, flow_folder=None):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folder=None, mask_dilate=None, dynamic_scores=None, flow_folder=None, semantics_folder=None):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -129,8 +131,17 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folde
             if os.path.exists(flow_path):
                 flow = np.load(flow_path)[0]
 
+        semantics = []
+        if semantics_folder:
+            semantics_path = os.path.join(semantics_folder, os.path.basename(extr.name.split(".")[0]))
+            if os.path.exists(semantics_path):
+                for sem_mask in sorted(os.listdir(semantics_path)):
+                    if sem_mask.endswith(".png"):
+                        sem_mask_pth = os.path.join(semantics_path, sem_mask)
+                        semantics.append(Image.open(sem_mask_pth).convert("L"))
+
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, mask=mask, dynamic_score=dynamic_score,
-                              image_path=image_path, image_name=image_name, width=width, height=height, flow=flow)
+                              image_path=image_path, image_name=image_name, width=width, height=height, flow=flow, semantics=semantics or None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
@@ -160,7 +171,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, masked, mask_dilate, dynamic_scores, flow, llffhold=8):
+def readColmapSceneInfo(path, images, eval, masked, mask_dilate, dynamic_scores, flow, semantics, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -175,8 +186,13 @@ def readColmapSceneInfo(path, images, eval, masked, mask_dilate, dynamic_scores,
     reading_dir = "images" if images == None else images
     masks_folder = os.path.join(path, "masks") if masked else None
     flow_folder = os.path.join(path, "flow") if flow else None
+    semantics_folder = os.path.join(path, "semantics") if semantics else None
 
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir), masks_folder=masks_folder, dynamic_scores=dynamic_scores, mask_dilate=mask_dilate, flow_folder=flow_folder)
+    cam_infos_unsorted = readColmapCameras(
+        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
+        masks_folder=masks_folder, dynamic_scores=dynamic_scores, mask_dilate=mask_dilate, flow_folder=flow_folder,
+        semantics_folder=semantics_folder,
+    )
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:

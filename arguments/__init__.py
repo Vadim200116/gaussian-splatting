@@ -59,6 +59,8 @@ class ModelParams(ParamGroup):
         self.mask_dilate = 10
         self.use_decoupled_appearance = False
         self.flow = False
+        self.semantics = False
+
 
         super().__init__(parser, "Loading Parameters", sentinel)
 

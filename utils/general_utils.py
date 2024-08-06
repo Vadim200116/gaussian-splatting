@@ -161,11 +161,26 @@ def prep_img(img):
     to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
     return to8b(img.detach()).transpose(1,2,0)
 
-def mask_image(transient_input, transient_model, threshold = 0.5):
-    weights = pred_weights(transient_input, transient_model)
+def join_mask_semantics(mask, semantics):
+    def cnt_IOU(a, b):
+        return (a * b).sum()/(a + b).sum()
 
-    mask_np = (weights>threshold).detach().cpu().numpy()
-    mask_ = np.expand_dims(np.array(mask_np),2).repeat(3, axis=2)
+    for prep_mask in semantics:
+        prep_mask = prep_mask.cuda()
+        r = cnt_IOU(prep_mask, mask)
+        if r > 0.1:
+            mask+=prep_mask
+
+    return (mask).clip(0, 1)
+
+def mask_image(transient_input, transient_model, semanitcs=None, threshold = 0.5):
+    weights = pred_weights(transient_input, transient_model)
+    mask = (weights > threshold)
+
+    if semanitcs is not None:
+        mask = join_mask_semantics(mask, semanitcs)
+
+    mask_ = np.expand_dims(np.array(mask.detach().cpu().numpy()), 2).repeat(3, axis=2)
     img_np = prep_img(transient_input[:3])
 
     h,w = img_np.shape[:2]
@@ -190,5 +205,3 @@ def make_gif(images, path_to_save, framerate=20, rate=10):
 
     os.system(f"ffmpeg -framerate {framerate} -i {img_path}/%05d.png -r {rate} -s 640x480  {path_to_save} -y")
     os.system("rm -r /tmp_images")
-
-

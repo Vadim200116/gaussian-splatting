@@ -33,7 +33,7 @@ import segmentation_models_pytorch as smp
 from pathlib import Path
 import torch.nn.functional as F
 import scipy
-from  utils.general_utils import pred_weights, mask_image, make_gif, prep_img
+from  utils.general_utils import pred_weights, mask_image, make_gif, prep_img, join_mask_semantics
 import numpy as np
 
 try:
@@ -128,6 +128,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         Ll1 = l1_loss(image, gt_image)
         mask = (weights.clone().detach() > 0.5).float()
+
+        if viewpoint_cam.semantics is not None:
+            mask = join_mask_semantics(mask, viewpoint_cam.semantics)
+
         alpha = np.exp(opt.schedule_beta * np.floor((1 + iteration) / 1.5))
         sampled_mask = 1 - torch.bernoulli(
             torch.clip(alpha + (1 - alpha) * (1-mask.clone()),
@@ -178,6 +182,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     transient_model.eval()
                     rendered_images = []
                     masked_images = []
+                    masked_images_semantics = []
                     cams = sorted(scene.getTrainCameras(), key=lambda x: int(x.image_name))
     
                     for viewpoint_cam in tqdm(cams):
@@ -194,9 +199,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         else:
                             transient_input = gt_image
                         masked_images.append(mask_image(transient_input, transient_model))
+                        masked_images_semantics.append(mask_image(transient_input, transient_model, semantics=viewpoint_cam.semantics))
 
-                    make_gif(masked_images, os.path.join(scene.model_path, f"masked.gif"), framerate=8)
-                    make_gif(rendered_images, os.path.join(scene.model_path, f"rendered.gif"), framerate=8)
+                    make_gif(masked_images, os.path.join(scene.model_path, "masked.gif"), framerate=8)
+                    make_gif(masked_images_semantics, os.path.join(scene.model_path, "masked+sam.gif"), framerate=8)
+                    make_gif(rendered_images, os.path.join(scene.model_path, "rendered.gif"), framerate=8)
                     if eval_path:
                         dataset.source_path = eval_path
 
