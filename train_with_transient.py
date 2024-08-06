@@ -124,48 +124,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 continue
         else:
             transient_input = gt_image
+
         weights = pred_weights(transient_input, transient_model)
 
-        # overlay weights on gt_image as green color intensity for visualization
-        with torch.no_grad():
-            if iteration % 100 == 0:
-                overlay = gt_image.clone()  # [3, h, w]
-                overlay[1] = overlay[1] + weights[0]
-                overlay[1] = torch.clamp(overlay[1], 0, 1)
-                # save overlay image
-                overlay = Image.fromarray((overlay.detach().permute(1, 2, 0).cpu().numpy() * 255).astype('uint8'))
-                overlay.save(str(overlays_path / f"{iteration}.png"))
-
-        # noinspection PyInterpreter
-        if stop_train_transient:
-            train_transient = (iteration < opt.iterations - 20000)
-        else:
-            train_transient = True
-
-        if train_transient:
-            if viewpoint_cam.mask is not None:
-                mask = viewpoint_cam.mask.cuda()
-                # mask_resized = torch.nn.functional.interpolate(mask.view(1,1,*mask.shape).float(), size=(224, 224), mode='bilinear', align_corners=True).view(1, *mask.shape)
-                weights_loss = torch.abs(weights-(1-mask.view(*weights.shape))).mean()
-                # weights_loss = torch.nn.functional.binary_cross_entropy(weights, 1-mask.view(*weights.shape))
-            else:
-                weights_loss = torch.abs(weights).mean()
-            Ll1 = l1_loss(image, gt_image)
-            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, size_average=False))
-            loss = 1.0 * ((1-weights) * loss).mean() + 0.1 * weights_loss
-        else:
-            threshold = 0.9
-            mask = (weights < threshold).squeeze()  # [h, w]
-            if viewpoint_cam.mask is not None:
-                given_mask = viewpoint_cam.mask.cuda()
-                mask[given_mask == 0] = 0
-            gt_image[:, mask == 0] = 0
-            image[:, mask == 0] = 0
-            Ll1 = l1_loss(image, gt_image).mean()
-            loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-            transient_model.eval()
-
-
+        weights_loss = torch.abs(weights).mean()
+    
+        Ll1 = l1_loss(image, gt_image)
+        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, size_average=False))
+        loss = ((1-weights) * loss).mean() + 0.1 * weights_loss
 
         if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
             depth = normalize_depth(render_pkg["depth"])
@@ -182,10 +148,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         iter_end.record()
 
-        if train_transient:
-            transient_optimizer.step()
-            transient_optimizer.zero_grad()
-            transient_scheduler.step()
+        transient_optimizer.step()
+        transient_optimizer.zero_grad()
+        transient_scheduler.step()
 
         with torch.no_grad():
             # Progress bar
