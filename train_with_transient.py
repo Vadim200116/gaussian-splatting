@@ -34,7 +34,7 @@ from pathlib import Path
 import torch.nn.functional as F
 import scipy
 from  utils.general_utils import pred_weights, mask_image, make_gif, prep_img
-
+import numpy as np
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -124,14 +124,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 continue
         else:
             transient_input = gt_image
-
         weights = pred_weights(transient_input, transient_model)
 
-        weights_loss = torch.abs(weights).mean()
-    
         Ll1 = l1_loss(image, gt_image)
+        mask = (weights.clone().detach() > 0.5).float()
+        alpha = np.exp(opt.schedule_beta * np.floor((1 + iteration) / 1.5))
+        sampled_mask = 1 - torch.bernoulli(
+            torch.clip(alpha + (1 - alpha) * (1-mask.clone()),
+            min=0.0, max=1.0)
+        )
+
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image, size_average=False))
-        loss = ((1-weights) * loss).mean() + 0.1 * weights_loss
+        loss =  ((1-sampled_mask) * loss).mean()
 
         if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
             depth = normalize_depth(render_pkg["depth"])
@@ -145,6 +149,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             loss += opt.lambda_tv * tv
 
         loss.backward()
+
+        transient_loss = ((1-weights) * l1_loss(image.detach(), gt_image)).mean() + 0.1 * torch.abs(weights).mean()
+        transient_loss.backward()
 
         iter_end.record()
 

@@ -99,6 +99,7 @@ class OptimizationParams(ParamGroup):
         self.tv_from_iter  =  0
         self.tv_until_iter  =  30_000
         self.canny_start = 1000
+        self.schedule_beta = -1e-3
 
         super().__init__(parser, "Optimization Parameters")
 
