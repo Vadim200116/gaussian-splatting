@@ -19,6 +19,8 @@ from PIL import Image
 import os
 import imageio
 from tqdm import tqdm
+import cv2
+from kornia.morphology import dilation
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -173,12 +175,65 @@ def join_mask_semantics(mask, semantics):
 
     return (mask).clip(0, 1)
 
-def mask_image(transient_input, transient_model, semanitcs=None, threshold = 0.5):
-    weights = pred_weights(transient_input, transient_model)
-    mask = (weights > threshold)
+def split_mask(mask):
+    binary_mask = mask.cpu().numpy().astype(np.uint8)
+    num_labels, labels = cv2.connectedComponents(binary_mask)
 
-    if semanitcs is not None:
-        mask = join_mask_semantics(mask, semanitcs)
+    unique_labels = np.unique(labels)[1:]
+    individual_masks = [(labels == i).astype(np.uint8) * 255 for i in unique_labels]
+
+    return individual_masks
+
+def calculate_iou(bbox, mask):
+    x1, y1, w, h = bbox
+    x2, y2 = x1 + w, y1 + h
+
+    bbox_mask = torch.zeros_like(mask)
+    bbox_mask[y1:y2, x1:x2] = 1
+
+    union = (bbox_mask + mask).sum()
+
+    if union == 0:
+        return 0.0
+
+    intersection = (bbox_mask * mask).sum()
+
+    return intersection / union
+
+def read_bbox(row, resolution):
+    return (
+        int(row['bbox_x0'] // resolution), 
+        int(row['bbox_y0'] // resolution), 
+        int(row['bbox_w'] // resolution), 
+        int(row['bbox_h'] // resolution)
+    )
+
+def cnt_semantic_mask(input_mask, semantic_paths, metadata, resolution):
+    individual_masks = split_mask(input_mask)
+    res_mask = input_mask.clone().cuda()
+
+    for ind_mask in individual_masks:
+        ind_mask_cuda = torch.tensor(ind_mask, dtype=torch.bool).cuda()
+        for idx, row in metadata.iterrows():
+            bbox = read_bbox(row, resolution)
+            jaccard_idx = calculate_iou(bbox, ind_mask_cuda)
+            if jaccard_idx > 0.3:
+                mask_path = os.path.join(semantic_paths[idx])
+                mask = Image.open(mask_path).resize((res_mask.shape[1], res_mask.shape[0]))
+                mask = torch.tensor(np.array(mask) / 255.0, dtype=torch.float32).cuda()
+                res_mask += mask
+
+    kernel = torch.ones(5, 5).cuda()
+    res_mask = dilation(torch.clamp(res_mask, 0, 1).unsqueeze(0).unsqueeze(0), kernel).squeeze()
+
+    return res_mask
+
+def mask_image(transient_input, transient_model, semantic_paths=None, metadata=None, resolution=None, threshold = 0.5):
+    weights = pred_weights(transient_input, transient_model)
+    mask = (weights > threshold).float()
+
+    if semantic_paths is not None:
+        mask = cnt_semantic_mask(mask, semantic_paths, metadata, resolution)
 
     mask_ = np.expand_dims(np.array(mask.detach().cpu().numpy()), 2).repeat(3, axis=2)
     img_np = prep_img(transient_input[:3])

@@ -23,6 +23,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
 import scipy.ndimage
+import pandas as pd
 
 
 class CameraInfo(NamedTuple):
@@ -39,7 +40,8 @@ class CameraInfo(NamedTuple):
     width: int
     height: int
     flow: np.array
-    semantics: np.array
+    semantic_paths: list
+    metadata: pd.array
 
 
 class SceneInfo(NamedTuple):
@@ -131,17 +133,17 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, masks_folde
             if os.path.exists(flow_path):
                 flow = np.load(flow_path)[0]
 
-        semantics = []
+        semantic_paths = None
+        metadata = None
         if semantics_folder:
-            semantics_path = os.path.join(semantics_folder, os.path.basename(extr.name.split(".")[0]))
-            if os.path.exists(semantics_path):
-                for sem_mask in sorted(os.listdir(semantics_path)):
-                    if sem_mask.endswith(".png"):
-                        sem_mask_pth = os.path.join(semantics_path, sem_mask)
-                        semantics.append(Image.open(sem_mask_pth).convert("L"))
+            image_semantics = os.path.join(semantics_folder, os.path.basename(extr.name.split(".")[0]))
+            if os.path.exists(image_semantics):
+                semantic_names = sorted(filter(lambda x: x.endswith(".png"), os.listdir(image_semantics)), key=lambda x: int(x.split(".")[0]))
+                semantic_paths = [os.path.join(image_semantics, i) for i in semantic_names] 
+                metadata = pd.read_csv(os.path.join(image_semantics, "metadata.csv"))
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image, mask=mask, dynamic_score=dynamic_score,
-                              image_path=image_path, image_name=image_name, width=width, height=height, flow=flow, semantics=semantics or None)
+                              image_path=image_path, image_name=image_name, width=width, height=height, flow=flow, semantic_paths=semantic_paths, metadata=metadata)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
     return cam_infos
