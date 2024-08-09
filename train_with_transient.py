@@ -69,7 +69,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    viewpoint_mapping = {int(view.image_name): view for view in scene.getTrainCameras()}
+    if dataset.flow:
+        viewpoint_mapping = {int(view.image_name): view for view in scene.getTrainCameras()}
+
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
@@ -183,7 +185,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     rendered_images = []
                     masked_images = []
                     masked_images_semantics = []
-                    cams = sorted(scene.getTrainCameras(), key=lambda x: int(x.image_name))
+                    cams = sorted(scene.getTrainCameras(), key=lambda x: x.image_name)
     
                     for viewpoint_cam in tqdm(cams):
                         rendered_images.append(prep_img(render(viewpoint_cam, gaussians, pipe, bg)["render"]))
@@ -220,7 +222,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                 cam.image_name = cam.image_name[4:]
                                 ref_cams.append(cam)
 
-                        ref_cams = sorted(ref_cams, key= lambda x: int(x.image_name))
+                        ref_cams = sorted(ref_cams, key= lambda x: x.image_name)
                         rendered_images = []
                         for cam in tqdm(ref_cams):
                             rendered_images.append(prep_img(render(cam, gaussians, pipe, bg)["render"]))
@@ -247,7 +249,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                             f.write("\n")
                             f.write("PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
 
+                    if scene.test_cameras is not None:
+                        ref_cams = sorted(scene.getTestCameras(), key=lambda x: x.image_name)
 
+                        rendered_images = []
+                        for cam in tqdm(ref_cams):
+                            rendered_images.append(prep_img(render(cam, gaussians, pipe, bg)["render"]))
+                        make_gif(rendered_images, os.path.join(args.model_path, f"test_frames.gif"), framerate=8, rate=10)
+
+                        ssims = []
+                        psnrs = []
+                        for idx, view in enumerate(tqdm(ref_cams)):
+                            with torch.no_grad():
+                                rendered_img  = torch.clamp(render(view, gaussians, pp, bg)["render"], 0.0, 1.0)
+                                gt_image = torch.clamp(view.original_image.to("cuda"), 0.0, 1.0)
+                                ssims.append(ssim(rendered_img, gt_image).mean())
+                                psnrs.append(psnr(rendered_img, gt_image).mean())
+                                if (idx + 1) % 50 == 0:
+                                    torch.cuda.empty_cache()
+
+                        print("  SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+                        print("  PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
             # Densification
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning

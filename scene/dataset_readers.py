@@ -174,14 +174,19 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 def readColmapSceneInfo(path, images, eval, masked, mask_dilate, dynamic_scores, flow, semantics, llffhold=8):
+    if os.path.exists(os.path.join(path, "sparse/0")):
+        sparse_dir =  "sparse/0"
+    else:
+        sparse_dir = "sparse"
+        
     try:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+        cameras_extrinsic_file = os.path.join(path, sparse_dir, "images.bin")
+        cameras_intrinsic_file = os.path.join(path, sparse_dir, "cameras.bin")
         cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
     except:
-        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
-        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+        cameras_extrinsic_file = os.path.join(path, sparse_dir, "images.txt")
+        cameras_intrinsic_file = os.path.join(path, sparse_dir, "cameras.txt")
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
@@ -201,14 +206,24 @@ def readColmapSceneInfo(path, images, eval, masked, mask_dilate, dynamic_scores,
         train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
         test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
     else:
-        train_cam_infos = cam_infos
-        test_cam_infos = []
+        train_split_path = Path(path) / "train_list.txt"
+        test_split_path = Path(path) / "test_list.txt"
+
+        if os.path.exists(train_split_path) and os.path.exists(test_split_path):
+            train_image_names = set(i.split(".")[0] for i in train_split_path.read_text().splitlines())
+            train_cam_infos = [c for c in cam_infos if c.image_name in train_image_names]
+
+            test_image_names = set(i.split(".")[0] for i in test_split_path.read_text().splitlines())
+            test_cam_infos = [c for c in cam_infos if c.image_name in test_image_names]
+        else:
+            train_cam_infos = cam_infos
+            test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
-    ply_path = os.path.join(path, "sparse/0/points3D.ply")
-    bin_path = os.path.join(path, "sparse/0/points3D.bin")
-    txt_path = os.path.join(path, "sparse/0/points3D.txt")
+    ply_path = os.path.join(path, f"{sparse_dir}/points3D.ply")
+    bin_path = os.path.join(path, f"{sparse_dir}/points3D.bin")
+    txt_path = os.path.join(path, f"{sparse_dir}/points3D.txt")
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:
