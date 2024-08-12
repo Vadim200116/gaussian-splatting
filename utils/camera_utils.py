@@ -58,6 +58,9 @@ def loadCam(args, id, cam_info, resolution_scale):
     if cam_info.dynamic_score:
         dynamic_score = PILtoTorch(cam_info.dynamic_score, resolution)
 
+    objects = None
+    if cam_info.objects:
+        objects = PILtoTorch(cam_info.objects, resolution)
 
     gt_image = resized_image_rgb[:3, ...]
     loaded_mask = None
@@ -71,6 +74,7 @@ def loadCam(args, id, cam_info, resolution_scale):
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device,
                   mask=mask, dynamic_score=dynamic_score, flow=flow, 
                   semantic_paths = cam_info.semantic_paths, metadata = cam_info.metadata,
+                  objects=objects,
                 )
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):

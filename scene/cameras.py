@@ -19,7 +19,7 @@ class Camera(nn.Module):
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda",
                  mask=None, dynamic_score=None, flow=None, semantic_paths=None, metadata=None,
-                
+                 objects=None,
                 ):
         super(Camera, self).__init__()
 
@@ -46,6 +46,7 @@ class Camera(nn.Module):
         self.dynamic_score = dynamic_score
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
+        self.objects = objects
 
         if gt_alpha_mask is not None:
             self.original_image *= gt_alpha_mask.to(self.data_device)

@@ -46,7 +46,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=8 if dataset.flow else 3, encoder_weights='imagenet', classes=1,
+
+    n_channels = 3
+    if dataset.objects:
+        n_channels = 1
+
+    transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=n_channels, encoder_weights='imagenet', classes=1,
                              activation="sigmoid", encoder_depth=5, decoder_channels=[224, 128, 64, 32, 16]).to("cuda")
     # transient_model = smp.UnetPlusPlus('timm-efficientnet-b0', in_channels=3, encoder_weights='imagenet',
     #                                    classes=1,
@@ -124,6 +129,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 transient_input = torch.cat((gt_image, next_image, flow), dim=0)
             else:
                 continue
+        elif dataset.objects:
+            transient_input = viewpoint_cam.objects.cuda()
         else:
             transient_input = gt_image
         weights = pred_weights(transient_input, transient_model)
@@ -198,6 +205,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                 transient_input = torch.cat((gt_image, next_image, flow), dim=0).cuda()
                             else:
                                 continue
+                        elif dataset.objects:
+                            transient_input = viewpoint_cam.objects.cuda()
                         else:
                             transient_input = gt_image
                         masked_images.append(mask_image(transient_input, transient_model))
@@ -270,6 +279,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                         print("  SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
                         print("  PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
+
+                        with open(os.path.join(args.model_path, "report.txt"), "w") as f:
+                            f.write("SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+                            f.write("\n")
+                            f.write("PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
             # Densification
             if iteration < opt.densify_until_iter:
                 # Keep track of max radii in image-space for pruning
