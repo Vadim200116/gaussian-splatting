@@ -48,7 +48,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians = GaussianModel(dataset.sh_degree)
 
     n_channels = 3
-    if dataset.objects:
+    
+    if dataset.flow:
+        n_channels = 5
+    elif dataset.objects:
         n_channels = 1
 
     transient_model = smp.UnetPlusPlus('timm-mobilenetv3_small_100', in_channels=n_channels, encoder_weights='imagenet', classes=1,
@@ -73,9 +76,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
-
-    if dataset.flow:
-        viewpoint_mapping = {int(view.image_name): view for view in scene.getTrainCameras()}
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
@@ -124,9 +124,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if dataset.flow:
             if viewpoint_cam.flow is not None:
                 flow = viewpoint_cam.flow.cuda()
-                next_image_idx = int(viewpoint_cam.image_name) + 1
-                next_image = viewpoint_mapping[next_image_idx].original_image.cuda()
-                transient_input = torch.cat((gt_image, next_image, flow), dim=0)
+                transient_input = torch.cat((gt_image, flow), dim=0)
             else:
                 continue
         elif dataset.objects:
@@ -200,9 +198,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         if dataset.flow:
                             if viewpoint_cam.flow is not None:
                                 flow = viewpoint_cam.flow.cuda()
-                                next_image_idx = int(viewpoint_cam.image_name) + 1
-                                next_image = viewpoint_mapping[next_image_idx].original_image.cuda()
-                                transient_input = torch.cat((gt_image, next_image, flow), dim=0).cuda()
+                                transient_input = torch.cat((gt_image, flow), dim=0).cuda()
                             else:
                                 continue
                         elif dataset.objects:
