@@ -223,10 +223,19 @@ def readColmapSceneInfo(path, images, eval, masked, mask_dilate, dynamic_scores,
             train_cam_infos = [c for c in cam_infos if c.image_name in train_image_names]
 
             test_image_names = set(i.split(".")[0] for i in test_split_path.read_text().splitlines())
-            test_cam_infos = [c for c in cam_infos if c.image_name in test_image_names]
+            test_cam_infos = [c for c in cam_infos if c.image_name in test_image_names]            
         else:
-            train_cam_infos = cam_infos
+            train_cam_infos = []
             test_cam_infos = []
+            for c in cam_infos:
+                if c.image_name.find("clutter") != -1:
+                    train_cam_infos.append(c)
+                elif c.image_name.find("extra")!= -1:
+                    test_cam_infos.append(c)
+            
+            if not train_cam_infos:
+                train_cam_infos = cam_infos
+                test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
