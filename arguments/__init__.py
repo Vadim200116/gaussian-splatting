@@ -99,6 +99,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_tv = 0
         self.tv_from_iter  =  1000
         self.tv_until_iter  =  30_000
+        self.schedule_beta = -1e-3
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

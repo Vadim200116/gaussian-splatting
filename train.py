@@ -13,6 +13,7 @@ import os
 import torch
 from random import randint
 import scipy
+import numpy as np
 from utils.loss_utils import l1_loss, ssim, total_variation_loss
 from gaussian_renderer import render, network_gui
 import sys
@@ -109,6 +110,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if pipe.transient:        
             weights = transient_model(gt_image.unsqueeze(0))
             mask = (weights.clone().detach() > 0.5).float()
+
+            alpha = np.exp(opt.schedule_beta * np.floor((1 + iteration) / 1.5))
+            mask = torch.bernoulli(
+                torch.clip(alpha + (1 - alpha) * mask,
+                min=0.0, max=1.0)
+            )
+
             diff = l1_loss(image, gt_image, average=False)
             Ll1 = (diff * mask).mean()
             ssim_value = (ssim(image, gt_image, size_average=False) * mask).mean()
