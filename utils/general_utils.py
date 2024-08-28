@@ -14,7 +14,8 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
-
+import os
+import imageio
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
@@ -131,3 +132,21 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def make_gif(frames, result_dir, gif_name, fps):
+    os.makedirs(result_dir, exist_ok=True)
+    writer = imageio.get_writer(f"{result_dir}/{gif_name}.gif", fps=fps)
+    for canvas in frames:
+        writer.append_data(canvas)
+    writer.close()
+
+def make_video(frames, result_dir, gif_name, fps):
+    os.makedirs(result_dir, exist_ok=True)
+    writer = imageio.get_writer(f"{result_dir}/{gif_name}.mp4", fps=fps)
+    for canvas in frames:
+        writer.append_data(np.array(canvas))
+    writer.close()
+
+def prep_img(img):
+    to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
+    return to8b(img.detach()).transpose(1,2,0)

@@ -16,7 +16,8 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state, get_expon_lr_func
+from utils.general_utils import safe_state, get_expon_lr_func, make_gif, make_video, prep_img
+from natsort import natsorted
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
@@ -28,7 +29,7 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fps):
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
@@ -131,6 +132,27 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp)
+            if iteration == saving_iterations[-1]:
+                cams = natsorted(scene.getTrainCameras(), key=lambda x: x.image_name)
+                rendered_images = []
+
+                for viewpoint_cam in tqdm(cams):
+                    rendered_images.append(prep_img(render(viewpoint_cam, gaussians, pipe, bg)["render"]))
+                    gt_image = viewpoint_cam.original_image.cuda()
+
+                make_gif(rendered_images, scene.model_path, "train", fps=fps)
+                make_video(rendered_images, scene.model_path, "train", fps=fps)
+
+                if scene.getTestCameras():
+                    eval_cams = natsorted(scene.getTestCameras(), key=lambda x: x.image_name)
+                    rendered_images = []
+                    for cam in tqdm(eval_cams):
+                        rendered_images.append(prep_img(render(cam, gaussians, pipe, bg)["render"]))
+
+                    make_gif(rendered_images, scene.model_path, "test", fps=fps)
+                    make_video(rendered_images, scene.model_path, "test", fps=fps)
+                    evaluate(gaussians, eval_cams, pipe, background, os.path.join(args.model_path, "report.txt"))
+
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -158,6 +180,26 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+def evaluate(gaussians, cameras, pipeline, background, path_to_save):
+    ssims = []
+    psnrs = []
+
+    for idx, view in enumerate(tqdm(cameras)):
+        with torch.no_grad():
+            rendered_img  = torch.clamp(render(view, gaussians, pipeline, background)["render"], 0.0, 1.0)
+            gt_image = torch.clamp(view.original_image.to("cuda"), 0.0, 1.0)
+            ssims.append(ssim(rendered_img, gt_image).mean())
+            psnrs.append(psnr(rendered_img, gt_image).mean())
+            if (idx + 1) % 50 == 0:
+                torch.cuda.empty_cache()
+    
+    print("  SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+    print("  PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
+    with open(path_to_save, "w") as f:
+        f.write("SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+        f.write("\n")
+        f.write("PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -237,6 +279,8 @@ if __name__ == "__main__":
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--fps", type=int, default = 8)
+
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -249,7 +293,7 @@ if __name__ == "__main__":
     if not args.disable_viewer:
         network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.start_checkpoint, args.debug_from, args.fps)
 
     # All done
     print("\nTraining complete.")
