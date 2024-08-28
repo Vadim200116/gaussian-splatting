@@ -189,7 +189,18 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
             with open(os.path.join(path, "sparse/0", "test.txt"), 'r') as file:
                 test_cam_names_list = [line.strip() for line in file]
     else:
-        test_cam_names_list = []
+        # Support wild-gs on-the-go format
+        train_split_path = Path(path) / "train_list.txt"
+        test_split_path = Path(path) / "test_list.txt"
+
+        if os.path.exists(train_split_path) and os.path.exists(test_split_path):
+            test_cam_names_list = set(i for i in test_split_path.read_text().splitlines())
+        else:
+            # Support original on-the-go format
+            test_cam_names_list = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics if cam_extrinsics[cam_id].name.find("extra")!= -1]
+            if not test_cam_names_list:
+                # Supoort ours (test frames begin with ref)
+                test_cam_names_list = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics if cam_extrinsics[cam_id].name.find("ref")!= -1]
 
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(
