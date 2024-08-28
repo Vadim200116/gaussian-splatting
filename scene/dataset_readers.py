@@ -176,19 +176,21 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
             sys.exit(1)
 
     if eval:
-        if "360" in path:
-            llffhold = 8
-        if llffhold:
-            print("------------LLFF HOLD-------------")
-            cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
-            cam_names = sorted(cam_names)
-            test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
-        else:
-            with open(os.path.join(path, "sparse/0", "test.txt"), 'r') as file:
-                test_cam_names_list = [line.strip() for line in file]
+        # Support original on-the-go format
+        test_cam_names_list = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics if cam_extrinsics[cam_id].name.find("extra")!= -1]
+        if not test_cam_names_list:
+            if "360" in path:
+                llffhold = 8
+            if llffhold:
+                print("------------LLFF HOLD-------------")
+                cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
+                cam_names = sorted(cam_names)
+                test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
+            else:
+                with open(os.path.join(path, "sparse/0", "test.txt"), 'r') as file:
+                    test_cam_names_list = [line.strip() for line in file]
     else:
         test_cam_names_list = []
-
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(
         cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, depths_params=depths_params,
