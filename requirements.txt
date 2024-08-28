@@ -11,3 +11,4 @@ tqdm
 opencv-python
 natsort
 imageio
+segmentation-models-pytorch

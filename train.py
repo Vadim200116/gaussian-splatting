@@ -24,6 +24,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr, image2canny
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.transient_model import UnetModel
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -36,6 +37,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+
+    if pipe.transient == "unet":
+        transient_model = UnetModel().cuda()
+        transient_optimizer = torch.optim.Adam(transient_model.parameters(), lr=1e-5)
+        transient_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(transient_optimizer, opt.iterations, 5e-6)
+
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -52,6 +59,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
+    ema_tr_loss_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -98,8 +106,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        ssim_value = ssim(image, gt_image)
+        if pipe.transient:        
+            weights = transient_model(gt_image.unsqueeze(0))
+            mask = (weights.clone().detach() > 0.5).float()
+            diff = l1_loss(image, gt_image, average=False)
+            Ll1 = (diff * mask).mean()
+            ssim_value = (ssim(image, gt_image, size_average=False) * mask).mean()
+
+            transient_loss = (diff.detach() * weights).mean() + 0.1 * torch.abs(1-weights).mean()
+            transient_loss.backward()
+
+            transient_optimizer.step()
+            transient_scheduler.step()
+        else:
+            transient_loss = 0
+            Ll1 = l1_loss(image, gt_image)
+            ssim_value = ssim(image, gt_image)
+
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
         # Depth regularization
@@ -136,9 +159,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_Ll1depth_for_log = 0.4 * Ll1depth + 0.6 * ema_Ll1depth_for_log
+            ema_tr_loss_for_log = 0.4 * transient_loss + 0.6 * ema_tr_loss_for_log
 
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}"})
+                progress_bar.set_postfix({
+                    "Loss": f"{ema_loss_for_log:.{7}f}",
+                    "Transient Loss": f"{ema_tr_loss_for_log:.{7}f}",
+                    "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}",
+                })
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
@@ -167,6 +195,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                if pipe.transient:
+                    torch.save(transient_model.state_dict(), scene.model_path + f"/transient_{iteration}.pth")
+
 
             # Densification
             if iteration < opt.densify_until_iter:
