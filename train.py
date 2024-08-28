@@ -12,14 +12,15 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+import scipy
+from utils.loss_utils import l1_loss, ssim, total_variation_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
 from utils.general_utils import safe_state, get_expon_lr_func
 import uuid
 from tqdm import tqdm
-from utils.image_utils import psnr
+from utils.image_utils import psnr, image2canny
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 try:
@@ -113,6 +114,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             Ll1depth = Ll1depth.item()
         else:
             Ll1depth = 0
+
+        # Total variation regularization
+        if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
+            normalize_depth = lambda x:  (x-x.min())/(x.max()-x.min())
+            depth = normalize_depth(render_pkg["depth"])
+
+            canny_mask = image2canny(image.permute(1,2,0), 50, 150, isEdge1=False)
+            canny_mask = scipy.ndimage.binary_erosion(canny_mask, iterations=2, border_value=1)
+            tv_mask = torch.tensor(canny_mask).cuda()
+
+            tv = total_variation_loss(depth.squeeze(), tv_mask)
+            loss += opt.lambda_tv * tv
 
         loss.backward()
 

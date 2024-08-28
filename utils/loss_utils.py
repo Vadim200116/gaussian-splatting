@@ -62,3 +62,15 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map.mean(1).mean(1).mean(1)
 
+def total_variation_loss(img, mask=None):
+    d_w = torch.pow(img[:, :-1] - img[:, 1:], 2)
+    d_h = torch.pow(img[:-1, :] - img[1:, :], 2)
+
+    if mask is not None:
+        d_w *= mask[:, :-1]
+        d_h *= mask[:-1, :]
+
+    w_variance = torch.mean(d_w)
+    h_variance = torch.mean(d_h)
+
+    return h_variance + w_variance
