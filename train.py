@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, anisotropic_total_variation_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -176,6 +176,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             Ll1depth = Ll1depth.item()
         else:
             Ll1depth = 0
+
+        # Total variation regularization
+        if opt.lambda_tv and iteration > opt.tv_from_iter and iteration < opt.tv_until_iter:
+            normalize_depth = lambda x:  (x-x.min())/(x.max()-x.min())
+            depth = normalize_depth(render_pkg["depth"])
+            tv = anisotropic_total_variation_loss(depth.squeeze())
+            loss += opt.lambda_tv * tv
 
         loss.backward()
 

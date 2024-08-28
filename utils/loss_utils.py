@@ -66,3 +66,10 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     else:
         return ssim_map
 
+
+def anisotropic_total_variation_loss(img):
+    d_w = torch.abs(img[:, :-1] - img[:, 1:])
+    d_h = torch.abs(img[:-1, :] - img[1:, :])
+    w_variation = torch.mean(d_w)
+    h_variance = torch.mean(d_h)
+    return h_variance + w_variation

@@ -103,6 +103,9 @@ class OptimizationParams(ParamGroup):
         self.transient_from_iter = 500
         self.transient_until_iter = 30_000
         self.transient_buffer_interval = 250
+        self.lambda_tv = 0.1
+        self.tv_from_iter  =  500
+        self.tv_until_iter  =  30_000
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
