@@ -16,7 +16,7 @@ from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state, get_expon_lr_func, make_gif, make_video, prep_img
+from utils.general_utils import safe_state, get_expon_lr_func, make_gif, make_video, prep_img, mask_frame
 from natsort import natsorted
 import uuid
 from tqdm import tqdm
@@ -218,6 +218,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     make_gif(rendered_images, scene.model_path, "test", fps=fps)
                     make_video(rendered_images, scene.model_path, "test", fps=fps)
                     evaluate(gaussians, eval_cams, pipe, background, os.path.join(args.model_path, "report.txt"))
+
+                if not pipe.disable_transient:
+                    masked_frames = []
+                    transient_model.eval()
+                    for viewpoint_cam in tqdm(cams):
+                        gt_image = viewpoint_cam.original_image.cuda()
+                        mask = masks_bank[viewpoint_cam.image_name]
+                        masked_img = mask_frame(prep_img(gt_image), mask)
+                        masked_frames.append(masked_img)
+
+                    make_gif(masked_frames, scene.model_path, "masked", fps=fps)
+                    make_video(masked_frames, scene.model_path, "masked", fps=fps)
 
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
