@@ -15,7 +15,7 @@ from torch import nn
 from random import randint
 import scipy
 import numpy as np
-from utils.loss_utils import l1_loss, ssim, total_variation_loss
+from utils.loss_utils import l1_loss, ssim, total_variation_loss, robust_mask, update_running_stats
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -59,6 +59,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
+
+    running_stats = {
+        "hist_err": torch.zeros(opt.bin_size),
+        "avg_err": 1.0, 
+        "lower_err": 0.0, 
+        "upper_err": 1.0, 
+    }
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -138,9 +145,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             Ll1 = (diff * mask).mean()
             ssim_value = (ssim(image, gt_image, size_average=False) * mask).mean()
 
-            transient_loss = (diff.detach() * weights).mean() + 0.1 * torch.abs(1-weights).mean()
-            transient_loss.backward()
+            if dataset.loss_type == "l1":
+                transient_loss = (diff.detach() * weights).mean() + 0.1 * torch.abs(1-weights).mean()
+            else:
+                lower_mask = robust_mask(diff.permute(1,2,0).unsqueeze(0), running_stats["lower_err"]).detach()
+                upper_mask = robust_mask(diff.permute(1,2,0).unsqueeze(0), running_stats["upper_err"]).detach()
+                transient_loss = torch.mean(torch.nn.ReLU()(weights.flatten() - upper_mask.flatten()) + torch.nn.ReLU()(lower_mask.flatten() - weights.flatten()))
 
+                err = torch.histogram(
+                    torch.mean(diff, dim=0).clone().detach().cpu(),
+                    bins=opt.bin_size,
+                    range=(0.0, 1.0),
+                )[0]
+                update_running_stats(running_stats, err, opt)
+
+            transient_loss.backward()
             transient_optimizer.step()
             if transient_scheduler:
                 transient_scheduler.step()

@@ -56,6 +56,7 @@ class ModelParams(ParamGroup):
         self.train_test_exp = False
         self.data_device = "cuda"
         self.eval = False
+        self.loss_type = "l1"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -100,6 +101,10 @@ class OptimizationParams(ParamGroup):
         self.tv_from_iter  =  1000
         self.tv_until_iter  =  30_000
         self.schedule_beta = -1e-3
+        self.robust_percentile = 0.7
+        self.lower_bound = 0.5
+        self.upper_bound = 0.9
+        self.bin_size = 10000
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
