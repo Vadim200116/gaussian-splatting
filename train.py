@@ -11,6 +11,7 @@
 
 import os
 import torch
+from torch import nn
 from random import randint
 import scipy
 import numpy as np
@@ -25,7 +26,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr, image2canny
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from utils.transient_model import UnetModel
+from utils.transient_model import UnetModel, MLPModel
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -36,13 +37,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians)
+    scene = Scene(dataset, gaussians, load_semantics=pipe.transient=="mlp")
     gaussians.training_setup(opt)
 
     if pipe.transient == "unet":
         transient_model = UnetModel().cuda()
+        transient_model.train()
+
         transient_optimizer = torch.optim.Adam(transient_model.parameters(), lr=1e-5)
         transient_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(transient_optimizer, opt.iterations, 5e-6)
+    elif pipe.transient == "mlp":
+        transient_model = MLPModel(
+            num_classes=1, num_features=scene.getTrainCameras()[0].semantics.shape[0] + 80
+        ).cuda()
+        transient_model.train()
+
+        transient_optimizer = torch.optim.Adam(transient_model.parameters(), lr=1e-3)
+        # No lr scheduler in SpotlessSplats
+        transient_scheduler = None
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -107,8 +119,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        if pipe.transient:        
-            weights = transient_model(gt_image.unsqueeze(0))
+        if pipe.transient:   
+            if pipe.transient == "unet":
+                weights = transient_model(gt_image.unsqueeze(0))
+            elif pipe.transient == "mlp":
+                semantics = viewpoint_cam.semantics.cuda()
+                weights = transient_model(semantics, gt_image.shape[1], gt_image.shape[2], 20)
+
             mask = (weights.clone().detach() > 0.5).float()
 
             alpha = np.exp(opt.schedule_beta * np.floor((1 + iteration) / 1.5))
@@ -125,7 +142,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             transient_loss.backward()
 
             transient_optimizer.step()
-            transient_scheduler.step()
+            if transient_scheduler:
+                transient_scheduler.step()
         else:
             transient_loss = 0
             Ll1 = l1_loss(image, gt_image)
@@ -205,7 +223,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     transient_model.eval()
                     for viewpoint_cam in tqdm(cams):
                         gt_image = viewpoint_cam.original_image.cuda()
-                        mask = (transient_model(gt_image.unsqueeze(0)) > 0.5).float()
+                        if pipe.transient == "unet":
+                            weights = transient_model(gt_image.unsqueeze(0))
+                        elif pipe.transient == "mlp":
+                            semantics = viewpoint_cam.semantics.cuda()
+                            weights = transient_model(semantics, gt_image.shape[1], gt_image.shape[2], 20)
+
+                        mask = (weights > 0.5).float()
                         masked_img = mask_frame(prep_img(gt_image), mask)
                         masked_frames.append(masked_img)
 
