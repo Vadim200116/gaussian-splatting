@@ -143,3 +143,14 @@ def make_gif(frames, result_dir, gif_name, fps):
 def prep_img(img):
     to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
     return to8b(img.detach()).transpose(1,2,0)
+
+def mask_frame(frame, mask):
+    mask_ = np.expand_dims(np.array(mask.detach().cpu().numpy()), 2).repeat(3, axis=2)
+    h,w = frame.shape[:2]
+    green = np.zeros([h, w, 3])
+    green[:,:,1] = 255
+    alpha = 0.6
+    fuse_img = (1-alpha) * frame + alpha * green
+    fuse_img = (1-mask_) * fuse_img + mask_ * frame
+
+    return fuse_img.astype(np.uint8)
