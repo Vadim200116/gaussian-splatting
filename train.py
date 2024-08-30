@@ -130,7 +130,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if pipe.transient:   
             if pipe.transient == "unet":
                 weights = transient_model(gt_image.unsqueeze(0))
+                weights_lambda = 0.1
             elif pipe.transient == "mlp":
+                weights_lambda = 0.2
                 semantics = viewpoint_cam.semantics.cuda()
                 weights = transient_model(semantics, gt_image.shape[1], gt_image.shape[2], 20)
 
@@ -153,7 +155,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     gt_image_blured = gaussian_blur(gt_image, kernel)
                     diff = l1_loss(image_blured, gt_image_blured, average=False)
 
-                transient_loss = (diff.detach() * weights).mean() + 0.1 * torch.abs(1-weights).mean()
+                transient_loss = (diff.detach() * weights).mean() + weights_lambda * torch.abs(1-weights).mean()
             else:
                 lower_mask = robust_mask(diff.permute(1,2,0).unsqueeze(0), running_stats["lower_err"]).detach()
                 upper_mask = robust_mask(diff.permute(1,2,0).unsqueeze(0), running_stats["upper_err"]).detach()
