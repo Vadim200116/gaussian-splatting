@@ -12,6 +12,7 @@
 import os
 import torch
 from torch import nn
+from torchvision.transforms.functional import gaussian_blur
 from random import randint
 import scipy
 import numpy as np
@@ -146,6 +147,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_value = (ssim(image, gt_image, size_average=False) * mask).mean()
 
             if dataset.loss_type == "l1":
+                if opt.blur:
+                    kernel = (opt.blur_kernel_size, opt.blur_kernel_size)
+                    image_blured = gaussian_blur(image, kernel)
+                    gt_image_blured = gaussian_blur(gt_image, kernel)
+                    diff = l1_loss(image_blured, gt_image_blured, average=False)
+
                 transient_loss = (diff.detach() * weights).mean() + 0.1 * torch.abs(1-weights).mean()
             else:
                 lower_mask = robust_mask(diff.permute(1,2,0).unsqueeze(0), running_stats["lower_err"]).detach()

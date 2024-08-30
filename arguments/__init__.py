@@ -105,6 +105,8 @@ class OptimizationParams(ParamGroup):
         self.lower_bound = 0.5
         self.upper_bound = 0.9
         self.bin_size = 10000
+        self.blur = False
+        self.blur_kernel_size = 15
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
