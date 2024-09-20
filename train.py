@@ -173,9 +173,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if transient_scheduler:
                 transient_scheduler.step()
         else:
-            transient_loss = 0
-            Ll1 = l1_loss(image, gt_image)
-            ssim_value = ssim(image, gt_image)
+            if viewpoint_cam.mask is not None:
+                Ll1 = (l1_loss(image, gt_image, average=False) * viewpoint_cam.mask).mean()
+                ssim_value = (ssim(image, gt_image, size_average=False) * viewpoint_cam.mask).mean()
+            else:
+                Ll1 = l1_loss(image, gt_image)
+                ssim_value = ssim(image, gt_image)
+        transient_loss = 0
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
