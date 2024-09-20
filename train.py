@@ -154,8 +154,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_value = torch.mean(ssim_value * mask)
 
         else:
-            Ll1 = torch.mean(diff)
-            ssim_value = torch.mean(ssim_value)
+            if viewpoint_cam.mask is not None:
+                Ll1 = torch.mean(diff * viewpoint_cam.mask)
+                ssim_value = torch.mean(ssim_value * viewpoint_cam.mask)
+            else:
+                Ll1 = torch.mean(diff)
+                ssim_value = torch.mean(ssim_value)
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
