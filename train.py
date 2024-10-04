@@ -179,7 +179,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             else:
                 Ll1 = l1_loss(image, gt_image)
                 ssim_value = ssim(image, gt_image)
-        transient_loss = 0
+
+            transient_loss = 0
 
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
