@@ -58,7 +58,7 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.loss_type = "l1"
         self.masks = ""
-        self.mask_dilate = 10
+        self.mask_dilate = 5
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
