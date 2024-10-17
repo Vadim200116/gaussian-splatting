@@ -101,6 +101,8 @@ class OptimizationParams(ParamGroup):
         self.random_background = False
         self.lambda_tv = 0
         self.tv_from_iter  =  1000
+        self.lambda_entropy = 0.0
+        self.entropy_from_iter  =  1000
         self.tv_until_iter  =  30_000
         self.schedule_beta = -1e-3
         self.robust_percentile = 0.7

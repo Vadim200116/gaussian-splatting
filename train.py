@@ -16,7 +16,7 @@ from torchvision.transforms.functional import gaussian_blur
 from random import randint
 import scipy
 import numpy as np
-from utils.loss_utils import l1_loss, ssim, total_variation_loss, robust_mask, update_running_stats
+from utils.loss_utils import l1_loss, ssim, total_variation_loss, robust_mask, update_running_stats, EntropyL1DistanceLoss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
@@ -84,6 +84,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
+
+    entropy_reg = EntropyL1DistanceLoss()
     for iteration in range(first_iter, opt.iterations + 1):
         if network_gui.conn == None:
             network_gui.try_connect()
@@ -209,6 +211,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             tv = total_variation_loss(depth.squeeze(), tv_mask)
             loss += opt.lambda_tv * tv
+
+        if opt.lambda_entropy and iteration > opt.entropy_from_iter:
+            loss += opt.lambda_entropy * entropy_reg.forward(image, gt_image)
 
         loss.backward()
 

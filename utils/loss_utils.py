@@ -112,3 +112,45 @@ def update_running_stats(running_stats, err, cfg):
     running_stats["upper_err"] = torch.linspace(0, 1, cfg.bin_size + 1)[
             torch.where(torch.cumsum(running_stats["hist_err"], 0) >= upper_err)[0][0]]
 
+
+class EntropyL1DistanceLoss(torch.nn.Module):
+    def __init__(self, alpha = 1000, num_bins=256, epsilon=1e-8):
+        super().__init__()
+        self.num_bins = num_bins
+        self.epsilon = epsilon
+        self.alpha = alpha
+
+    def forward(self, rendered_image, gt_image):
+        # Compute L1 distances
+        l1_distances = torch.abs(gt_image - rendered_image).mean(0).flatten()
+
+        # Compute min and max distances
+        min_dist = l1_distances.min()
+        max_dist = l1_distances.max()
+
+        # Create bin edges
+        bin_edges = torch.linspace(min_dist, max_dist, steps=self.num_bins+1, device=gt_image.device)
+
+        # Use soft binning for differentiability
+        soft_hist = self.soft_histogram(l1_distances, bin_edges)
+
+        # Compute entropy
+        entropy = -torch.sum(soft_hist * torch.log(soft_hist + self.epsilon))
+
+        return entropy
+
+    def soft_histogram(self, values, bin_edges):
+        # Expand dimensions for broadcasting
+        values = values.unsqueeze(-1)
+        lower_edges = bin_edges[:-1].unsqueeze(0)
+        upper_edges = bin_edges[1:].unsqueeze(0)
+
+        # Compute soft assignments to bins
+        lower_bound = torch.sigmoid(self.alpha * (values - lower_edges))
+        upper_bound = torch.sigmoid(self.alpha * (upper_edges - values))
+        soft_assignments = lower_bound * upper_bound
+
+        # Normalize the histogram
+        soft_hist = soft_assignments.sum(dim=0) / values.numel()
+
+        return soft_hist
