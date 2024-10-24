@@ -172,6 +172,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             transient_loss.backward()
             transient_optimizer.step()
+            transient_optimizer.zero_grad()
             if transient_scheduler:
                 transient_scheduler.step()
         else:
