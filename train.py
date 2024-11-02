@@ -21,6 +21,7 @@ from natsort import natsorted
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
+from utils.transient_utils import LinearSegmentationHead, DinoFeatureExatractor
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 try:
@@ -29,12 +30,24 @@ try:
 except ImportError:
     TENSORBOARD_FOUND = False
 
+ENABLE_TRANSIENT = False
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, fps):
+    global ENABLE_TRANSIENT
+
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
+
+    if not pipe.disable_transient:
+        feature_extractor = DinoFeatureExatractor(pipe.dino_version)
+        transient_model = LinearSegmentationHead(1, feature_extractor.dino_model.embed_dim).cuda()
+        transient_model.train()
+        transient_optimizer = torch.optim.Adam(transient_model.parameters(), lr=1e-3)
+        masks_bank = {}
+
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         gaussians.restore(model_params, opt)
@@ -51,6 +64,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     viewpoint_indices = list(range(len(viewpoint_stack)))
     ema_loss_for_log = 0.0
     ema_Ll1depth_for_log = 0.0
+    ema_tr_loss_for_log = 0.0
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -97,8 +111,52 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        ssim_value = ssim(image, gt_image)
+        diff = l1_loss(image, gt_image, average=False)
+        ssim_value = (ssim(image, gt_image, size_average=False))
+
+        transient_loss = 0
+
+        if not pipe.disable_transient:
+            if iteration == opt.transient_from_iter:
+                ENABLE_TRANSIENT = True
+            elif iteration > opt.transient_until_iter:
+                ENABLE_TRANSIENT = False
+            elif iteration < opt.densify_until_iter and iteration % opt.opacity_reset_interval == 0:
+                ENABLE_TRANSIENT = False
+            elif iteration > opt.transient_from_iter and (iteration - opt.transient_buffer_interval) % opt.opacity_reset_interval == 0:
+                ENABLE_TRANSIENT = True
+
+            if ENABLE_TRANSIENT:
+                transient_model.train()
+                transient_optimizer.zero_grad()
+
+                transient_input = torch.cat((gt_image.unsqueeze(0), image.detach().unsqueeze(0)))
+                features = feature_extractor.extract(transient_input).squeeze()
+                transient_maps = transient_model(features, gt_image.shape[1], gt_image.shape[2]).squeeze()
+
+                mask = transient_maps[0].detach()
+                masks_bank[viewpoint_cam.image_name] = mask
+
+                masked_diff = torch.mean(diff.detach() * transient_maps[0])
+                mask_reg = torch.abs(1 - transient_maps[0]).mean()
+                transient_loss = masked_diff + 0.1 * mask_reg
+
+                if not pipe.disable_consistency:
+                    consistency_reg = torch.mean((1 - transient_maps[0]) * (1 - transient_maps[1].detach()))
+                    transient_loss += consistency_reg
+
+                transient_loss.backward()
+                transient_optimizer.step()
+            else:
+                mask = masks_bank.get(viewpoint_cam.image_name, torch.ones(gt_image.shape[2:]).to("cuda"))
+
+            Ll1 = torch.mean(diff * mask)
+            ssim_value = torch.mean(ssim_value * mask)
+
+        else:
+            Ll1 = torch.mean(diff)
+            ssim_value = torch.mean(ssim_value)
+
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
         # Depth regularization
@@ -123,15 +181,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             ema_Ll1depth_for_log = 0.4 * Ll1depth + 0.6 * ema_Ll1depth_for_log
+            ema_tr_loss_for_log = 0.4 * transient_loss + 0.6 * ema_tr_loss_for_log
 
             if iteration % 10 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}", "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}"})
+                progress_bar.set_postfix({
+                    "Loss": f"{ema_loss_for_log:.{7}f}",
+                    "Transient Loss": f"{ema_tr_loss_for_log:.{7}f}",
+                    "Depth Loss": f"{ema_Ll1depth_for_log:.{7}f}",
+                })
                 progress_bar.update(10)
             if iteration == opt.iterations:
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp)
+            if ENABLE_TRANSIENT:
+                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp, transient_maps, transient_loss)
+            else:
+                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp)
             if iteration == saving_iterations[-1]:
                 cams = natsorted(scene.getTrainCameras(), key=lambda x: x.image_name)
                 rendered_images = []
@@ -156,6 +222,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                if not pipe.disable_transient:
+                    torch.save(transient_model.state_dict(), scene.model_path + f"/transient_{iteration}.pth")
 
             # Densification
             if iteration < opt.densify_until_iter:
@@ -223,11 +291,19 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, train_test_exp):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, train_test_exp, transient_maps=None, transient_loss=None,):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
         tb_writer.add_scalar('iter_time', elapsed, iteration)
+
+        if transient_maps is not None:
+            tb_writer.add_scalar('gt_image_dynamic_area', torch.mean(1 - transient_maps[0]).item(), iteration)
+            tb_writer.add_scalar('rendered_image_static_area', torch.mean(transient_maps[1]).item(), iteration)
+
+        if transient_loss is not None:
+            tb_writer.add_scalar('transient_loss', transient_loss, iteration)
+
 
     # Report test and samples of training set
     if iteration in testing_iterations:
