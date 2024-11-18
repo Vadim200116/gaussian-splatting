@@ -21,7 +21,7 @@ from natsort import natsorted
 import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
-from utils.transient_utils import LinearSegmentationHead, DinoFeatureExatractor
+from utils.transient_utils import LinearSegmentationHead, DinoFeatureExatractor, dilate_mask
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 try:
@@ -132,9 +132,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 transient_input = torch.cat((gt_image.unsqueeze(0), image.detach().unsqueeze(0)))
                 features = feature_extractor.extract(transient_input).squeeze()
-                transient_maps = transient_model(features, gt_image.shape[1], gt_image.shape[2]).squeeze()
 
-                mask = transient_maps[0].detach()
+                transient_maps = transient_model(features)
+
+                transient_mask = transient_maps[0].detach()
+                if not pipe.disable_dilate:
+                    transient_mask = 1-dilate_mask(1-transient_mask, 1)
+
+                mask = LinearSegmentationHead.interpolate(transient_mask, gt_image.shape[1], gt_image.shape[2]).squeeze()
+                transient_maps = LinearSegmentationHead.interpolate(transient_maps, gt_image.shape[1], gt_image.shape[2]).squeeze()
+
                 masks_bank[viewpoint_cam.image_name] = mask
 
                 masked_diff = torch.mean(diff.detach() * transient_maps[0])

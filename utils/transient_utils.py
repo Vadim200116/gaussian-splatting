@@ -13,17 +13,20 @@ class LinearSegmentationHead(nn.Module):
         self.linear = nn.Linear(in_features, num_classes)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, x, width, height):
+    def forward(self, x):
         logits = self.linear(x)
         probs = self.sigmoid(logits)
-        probs = probs.reshape(-1, 1, 24, 24)
+        probs = probs.reshape(-1, 24, 24)
+        return probs
+
+    @staticmethod
+    def interpolate(probs, width, height):
         probs = F.interpolate(
-            probs, 
+            probs.reshape(-1, 1, 24, 24), 
             size=(width, height),
             mode='bilinear',
             align_corners=False
         )
-        
         return probs
 
 class DinoFeatureExatractor:
@@ -59,5 +62,13 @@ class DinoFeatureExatractor:
         features_list = []
         for features in features_dict:
             features_list.append(self.dino_model.norm(features.squeeze(0)))
-            
+
         return torch.cat(features_list, dim=-1)
+
+def dilate_mask(x, iterations=1):
+    x = x.unsqueeze(0).unsqueeze(0)
+
+    for _ in range(iterations):
+        dilated_mask = F.max_pool2d(x, kernel_size=3, stride=1, padding=1)
+    
+    return dilated_mask.squeeze()

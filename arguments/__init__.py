@@ -71,6 +71,7 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.debug = False
         self.disable_transient = False
+        self.disable_dilate = False
         self.disable_consistency = False
         self.dino_version = "dinov2_vits14"
         super().__init__(parser, "Pipeline Parameters")
