@@ -41,12 +41,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     scene = Scene(dataset, gaussians)
     gaussians.training_setup(opt)
 
+    masks_bank = {}
     if not pipe.disable_transient:
         feature_extractor = DinoFeatureExatractor(pipe.dino_version)
         transient_model = LinearSegmentationHead(1, feature_extractor.dino_model.embed_dim).cuda()
         transient_model.train()
         transient_optimizer = torch.optim.Adam(transient_model.parameters(), lr=1e-3)
-        masks_bank = {}
 
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
@@ -213,9 +213,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             if ENABLE_TRANSIENT:
-                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp, transient_maps, transient_loss)
+                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp, transient_maps, transient_loss, masks_bank)
             else:
-                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp)
+                training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background), dataset.train_test_exp, masks_bank=masks_bank)
             if iteration == saving_iterations[-1]:
                 cams = natsorted(scene.getTrainCameras(), key=lambda x: x.image_name)
                 rendered_images = []
@@ -321,7 +321,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, train_test_exp, transient_maps=None, transient_loss=None,):
+def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs, train_test_exp, transient_maps=None, transient_loss=None, masks_bank=None):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -352,6 +352,14 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                         image = image[..., image.shape[-1] // 2:]
                         gt_image = gt_image[..., gt_image.shape[-1] // 2:]
                     if tb_writer and (idx < 5):
+                        if masks_bank is not None and viewpoint.image_name in masks_bank:
+                            mask = masks_bank[viewpoint.image_name]
+                            masked_img = mask_frame(prep_img(gt_image), mask)
+
+                            masked_img = masked_img.astype(np.float32) / 255.0
+                            masked_img = masked_img.transpose(2, 0, 1)[None]
+                            tb_writer.add_images(config['name'] + "_view_{}/mask".format(viewpoint.image_name), masked_img, global_step=iteration)
+
                         tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
