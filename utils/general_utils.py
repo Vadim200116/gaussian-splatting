@@ -139,13 +139,6 @@ def safe_state(silent):
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
 
-def make_gif(frames, result_dir, gif_name, fps):
-    os.makedirs(result_dir, exist_ok=True)
-    writer = imageio.get_writer(f"{result_dir}/{gif_name}.gif", fps=fps)
-    for canvas in frames:
-        writer.append_data(canvas)
-    writer.close()
-
 def make_video(frames, result_dir, gif_name, fps):
     os.makedirs(result_dir, exist_ok=True)
     writer = imageio.get_writer(f"{result_dir}/{gif_name}.mp4", fps=fps)

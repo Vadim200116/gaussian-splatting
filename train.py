@@ -16,7 +16,7 @@ from utils.loss_utils import l1_loss, ssim, anisotropic_total_variation_loss
 from gaussian_renderer import render, network_gui
 import sys
 from scene import Scene, GaussianModel
-from utils.general_utils import safe_state, get_expon_lr_func, make_gif, make_video, prep_img, mask_frame
+from utils.general_utils import safe_state, get_expon_lr_func, make_video, prep_img, mask_frame
 from natsort import natsorted
 import uuid
 from tqdm import tqdm
@@ -224,7 +224,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     rendered_images.append(prep_img(render(viewpoint_cam, gaussians, pipe, bg)["render"]))
                     gt_image = viewpoint_cam.original_image.cuda()
 
-                make_gif(rendered_images, scene.model_path, "train", fps=fps)
                 make_video(rendered_images, scene.model_path, "train", fps=fps)
 
                 if scene.getTestCameras():
@@ -233,7 +232,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     for cam in tqdm(eval_cams):
                         rendered_images.append(prep_img(render(cam, gaussians, pipe, bg)["render"]))
 
-                    make_gif(rendered_images, scene.model_path, "test", fps=fps)
                     make_video(rendered_images, scene.model_path, "test", fps=fps)
                     evaluate(gaussians, eval_cams, pipe, background, os.path.join(args.model_path, "report.txt"))
 
@@ -246,7 +244,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                         masked_img = mask_frame(prep_img(gt_image), mask)
                         masked_frames.append(masked_img)
 
-                    make_gif(masked_frames, scene.model_path, "masked", fps=fps)
                     make_video(masked_frames, scene.model_path, "masked", fps=fps)
 
             if (iteration in saving_iterations):
