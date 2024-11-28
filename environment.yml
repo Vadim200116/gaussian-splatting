@@ -1,4 +1,4 @@
-name: gaussian_splatting
+name: t_3dgs
 channels:
   - pytorch
   - conda-forge
@@ -15,3 +15,8 @@ dependencies:
   - pip:
     - submodules/diff-gaussian-rasterization
     - submodules/simple-knn
+    - opencv-python
+    - natsort
+    - scipy
+    - imageio==2.31.2
+    - imageio-ffmpeg==0.4.9

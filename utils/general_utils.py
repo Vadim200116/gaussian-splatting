@@ -14,7 +14,8 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
-
+import os
+import imageio
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 
@@ -25,6 +26,12 @@ def PILtoTorch(pil_image, resolution):
         return resized_image.permute(2, 0, 1)
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
+
+def PILtoTorchMask(pil_mask, resolution):
+    resized_mask_PIL = pil_mask.resize(resolution)
+    resized_mask_binary = np.where(np.array(resized_mask_PIL) > 127, 255, 0).astype(np.uint8)
+    resized_mask = torch.from_numpy(np.array(resized_mask_binary)) / 255.0
+    return resized_mask.unsqueeze(dim=-1).permute(2, 0, 1)
 
 def get_expon_lr_func(
     lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
@@ -131,3 +138,25 @@ def safe_state(silent):
     np.random.seed(0)
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
+
+def make_video(frames, result_dir, gif_name, fps):
+    os.makedirs(result_dir, exist_ok=True)
+    writer = imageio.get_writer(f"{result_dir}/{gif_name}.mp4", fps=fps)
+    for canvas in frames:
+        writer.append_data(np.array(canvas))
+    writer.close()
+
+def prep_img(img):
+    to8b = lambda x : (255*np.clip(x.cpu().numpy(),0,1)).astype(np.uint8)
+    return to8b(img.detach()).transpose(1,2,0)
+
+def mask_frame(frame, mask):
+    mask_ = np.expand_dims(np.array(mask.detach().cpu().numpy()), 2).repeat(3, axis=2)
+    h,w = frame.shape[:2]
+    green = np.zeros([h, w, 3])
+    green[:,:,1] = 255
+    alpha = 0.6
+    fuse_img = (1-alpha) * frame + alpha * green
+    fuse_img = (1-mask_) * fuse_img + mask_ * frame
+
+    return fuse_img.astype(np.uint8)

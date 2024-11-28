@@ -14,8 +14,12 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 
-def l1_loss(network_output, gt):
-    return torch.abs((network_output - gt)).mean()
+def l1_loss(network_output, gt, average=True):
+    diff = torch.abs((network_output - gt))
+    if average:
+        return diff.mean()
+    else:
+        return diff
 
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
@@ -60,5 +64,12 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True):
     if size_average:
         return ssim_map.mean()
     else:
-        return ssim_map.mean(1).mean(1).mean(1)
+        return ssim_map
 
+
+def anisotropic_total_variation_loss(img):
+    d_w = torch.abs(img[:, :-1] - img[:, 1:])
+    d_h = torch.abs(img[:-1, :] - img[1:, :])
+    w_variation = torch.mean(d_w)
+    h_variance = torch.mean(d_h)
+    return h_variance + w_variation

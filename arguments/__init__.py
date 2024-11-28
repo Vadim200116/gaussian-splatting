@@ -56,6 +56,8 @@ class ModelParams(ParamGroup):
         self.train_test_exp = False
         self.data_device = "cuda"
         self.eval = False
+        self.masks = ""
+        self.mask_dilate = 5
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -68,6 +70,10 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
+        self.disable_transient = False
+        self.disable_dilate = False
+        self.disable_consistency = False
+        self.dino_version = "dinov2_vits14"
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):
@@ -95,6 +101,12 @@ class OptimizationParams(ParamGroup):
         self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_final = 0.01
         self.random_background = False
+        self.transient_from_iter = 500
+        self.transient_until_iter = 30_000
+        self.transient_buffer_interval = 250
+        self.lambda_tv = 0.1
+        self.tv_from_iter  =  500
+        self.tv_until_iter  =  30_000
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):
